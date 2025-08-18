@@ -10,10 +10,7 @@ import { UserProfile } from '../user/entities/user-profile.entity';
 import { UserTokens } from '../user/entities/user-tokens.entity';
 import { TokenTransaction } from '../user/entities/token-transaction.entity';
 import { OrderIncome } from '../user/entities/order-income.entity';
-import { MainUser } from '../external/entities/main-user.entity';
-import { MainOrder } from '../external/entities/order.entity';
-import { MainOrderItem } from '../external/entities/order-item.entity';
-import { Item } from '../external/entities/item.entity';
+ 
 
 // telegram.module.ts
 @Module({
@@ -25,9 +22,8 @@ import { Item } from '../external/entities/item.entity';
         telegram: { apiRoot: 'https://api.telegram.org', timeout: 120_000 },
       }),
     }),
-    // Регистрируем репозитории для локальной и основной БД
+    // Регистрируем репозитории для локальной БД
     TypeOrmModule.forFeature([UserProfile, UserTokens, TokenTransaction, OrderIncome]),
-    TypeOrmModule.forFeature([MainUser, MainOrder, MainOrderItem, Item], 'mainDb'),
     OpenaiModule,
     VoiceModule,
     VideoModule,

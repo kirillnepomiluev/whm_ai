@@ -167,7 +167,7 @@ export class OpenAiService {
 
     const baseURL =
       this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() ||
-      'https://chat.neurolabtg.ru/v1';
+      'https://ai.1devfull.store/v1';
 
     this.openAi = new OpenAI({
       apiKey: key,
@@ -674,7 +674,7 @@ export class OpenAiService {
    */
   getApiStatus(): { mainApi: string; fallbackApi: string; isMainApiAvailable: boolean } {
     return {
-      mainApi: this.openAi.baseURL || 'https://chat.neurolabtg.ru/v1',
+      mainApi: this.openAi.baseURL || 'https://ai.1devfull.store/v1',
       fallbackApi: this.fallbackOpenAi.baseURL || 'https://api.openai.com/v1',
       isMainApiAvailable: this.isMainApiAvailable
     };

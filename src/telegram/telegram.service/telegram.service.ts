@@ -1,8 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectBot } from 'nestjs-telegraf';
-import { Telegraf, Context, Markup } from 'telegraf';
-import * as QRCode from 'qrcode';
-import * as path from 'path';
+import { Telegraf, Context } from 'telegraf';
 import fetch from 'node-fetch';
 import { OpenAiService } from '../../openai/openai.service/openai.service';
 import { VoiceService } from '../../voice/voice.service/voice.service';
@@ -13,16 +11,12 @@ import { UserProfile } from '../../user/entities/user-profile.entity';
 import { UserTokens } from '../../user/entities/user-tokens.entity';
 import { TokenTransaction } from '../../user/entities/token-transaction.entity';
 import { OrderIncome } from '../../user/entities/order-income.entity';
-import { MainUser } from '../../external/entities/main-user.entity';
-import { MainOrder } from '../../external/entities/order.entity';
-import { MainOrderItem } from '../../external/entities/order-item.entity';
-import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
   // текст приветственного сообщения
-  private readonly welcomeMessage = 'Привет! Я Нейролабик — твой умный и весёлый помощник. Рад знакомству и всегда готов помочь!';
+  private readonly welcomeMessage = 'Я умный ассистент компании "We have music". Я здесь, чтобы помочь вам с вопросами по лицензированию музыкальных треков, цифровой дистрибьюции и другим связанным темам. Как я могу помочь вам сегодня? 🎶';
   // Стоимость операций в токенах
   private readonly COST_TEXT = 1;
   private readonly COST_IMAGE = 60;
@@ -35,50 +29,23 @@ export class TelegramService {
   // Флаги для управления функциями генерации
   private readonly IMAGE_GENERATION_ENABLED = true; // генерация изображений включена
   private readonly VIDEO_GENERATION_ENABLED = false; // генерация видео отключена
-  // временное хранилище для незарегистрированных пользователей,
-  // которые перешли по пригласительной ссылке
-  private pendingInvites = new Map<number, string>();
-  // ссылка на основной бот компании, где проходит первоначальная регистрация
-  private readonly mainBotUrl: string;
-
-  // формирует ссылку на основной бот, добавляя id пригласителя при необходимости
-  private getMainBotLink(inviterId?: string): string {
-    return inviterId ? `${this.mainBotUrl}?start=${inviterId}` : this.mainBotUrl;
-  }
+  
 
   constructor(
     @InjectBot() private readonly bot: Telegraf<Context>,
     private readonly openai: OpenAiService,
     private readonly voice: VoiceService,
     private readonly video: VideoService,
-    private readonly cfg: ConfigService,
     @InjectRepository(UserProfile)
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(UserTokens)
     private readonly tokensRepo: Repository<UserTokens>,
     @InjectRepository(TokenTransaction)
     private readonly txRepo: Repository<TokenTransaction>,
-    @InjectRepository(MainUser, 'mainDb')
-    private readonly mainUserRepo: Repository<MainUser>,
-    @InjectRepository(MainOrder, 'mainDb')
-    private readonly orderRepo: Repository<MainOrder>,
-    @InjectRepository(MainOrderItem, 'mainDb')
-    private readonly orderItemRepo: Repository<MainOrderItem>,
     @InjectRepository(OrderIncome)
     private readonly incomeRepo: Repository<OrderIncome>,
   ) {
-    // ссылка на основной бот из переменной окружения
-    this.mainBotUrl = this.cfg.get<string>('MAIN_BOT_LINK') ??
-      'https://t.me/test_NLab_bot';
     this.registerHandlers();
-  }
-
-  // Поиск пользователя в основной базе.
-  // Ранее здесь была проверка на диапазон 32-bit, но теперь
-  // основной бот хранит идентификаторы как bigint,
-  // поэтому выполняем поиск без дополнительных ограничений.
-  private findMainUser(id: number): Promise<MainUser | null> {
-    return this.mainUserRepo.findOne({ where: { telegramId: id } });
   }
 
   // Создаёт запись о движении токенов
@@ -210,36 +177,10 @@ export class TelegramService {
     }
   }
 
-  // Получить ФИО пользователя из основной базы для отображения
-  private getFullName(user: MainUser): string {
-    const parts = [] as string[];
-    if (user.firstName) parts.push(user.firstName);
-    if (user.lastName) parts.push(user.lastName);
-    return parts.join(' ').trim() || user.username || String(user.telegramId);
-  }
-
-  /** Списывает cost токенов. При нехватке выводит сообщение о подписке/пополнении */
+  /** Списывает cost токенов. При нехватке сообщает без предложений подписки */
   private async chargeTokens(ctx: Context, profile: UserProfile, cost: number): Promise<boolean> {
     if (profile.tokens.tokens < cost) {
-      if (!profile.tokens.plan) {
-        await ctx.reply(
-          'На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
-          Markup.inlineKeyboard([
-            Markup.button.url('PLUS', `${this.mainBotUrl}?start=itemByID_22`),
-            Markup.button.url('PRO', `${this.mainBotUrl}?start=itemByID_23`),
-            Markup.button.callback('оплачено', 'payment_done'),
-          ]),
-        );
-      } else {
-        const price = profile.tokens.plan === 'PLUS' ? 400 : 200;
-        await ctx.reply(
-          `На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом пополните баланс:\n${price} рублей - 1000 токенов`,
-          Markup.inlineKeyboard([
-            Markup.button.url('пополнить', `${this.mainBotUrl}?start=itemByID_24`),
-            Markup.button.callback('оплачено', 'payment_done'),
-          ]),
-        );
-      }
+      await ctx.reply('На вашем балансе недостаточно токенов.');
       return false;
     }
     profile.tokens.tokens -= cost;
@@ -264,14 +205,12 @@ export class TelegramService {
     const now = new Date();
     let isNew = false;
     if (!profile) {
-      const mainUser = await this.findMainUser(from.id);
       profile = this.profileRepo.create({
         telegramId: String(from.id),
-        firstName: mainUser?.firstName ?? from.first_name,
-        username: mainUser?.username ?? from.username,
+        firstName: from.first_name,
+        username: from.username,
         firstVisitAt: now,
         lastMessageAt: now,
-        invitedBy,
       });
       profile = await this.profileRepo.save(profile);
 
@@ -307,55 +246,10 @@ export class TelegramService {
     return profile;
   }
 
-  /**
-   * Проверяет наличие пользователя в БД и при необходимости создаёт профиль.
-   * Возвращает профиль или null, если пользователь не подтвердил приглашение.
-   */
+  /** Всегда создаёт (при необходимости) и возвращает локальный профиль */
   private async ensureUser(ctx: Context): Promise<UserProfile | null> {
     const from = ctx.message.from;
-    // пробуем найти пользователя в локальной базе
-    let profile = await this.profileRepo.findOne({
-      where: { telegramId: String(from.id) },
-      relations: ['tokens'],
-    });
-
-    if (!profile) {
-      // если его нет, ищем в основной базе
-      const mainUser = await this.findMainUser(from.id);
-      if (!mainUser) {
-        const inviterId = this.pendingInvites.get(from.id);
-        const link = this.getMainBotLink(inviterId);
-        await ctx.reply(
-          `Сначала зарегистрируйтесь в основном боте компании по ссылке: ${link}`,
-        );
-        return null;
-      }
-
-      profile = await this.findOrCreateProfile(
-        from,
-        mainUser.whoInvitedId ? String(mainUser.whoInvitedId) : undefined,
-        ctx,
-      );
-    } else {
-      profile = await this.findOrCreateProfile(from, undefined, ctx);
-    }
-
-    if (profile.subscriptionUntil && profile.subscriptionUntil.getTime() <= Date.now()) {
-      if (profile.tokens.plan) {
-        profile.tokens.plan = null;
-        await this.tokensRepo.save(profile.tokens);
-      }
-      await ctx.reply(
-        'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
-        Markup.inlineKeyboard([
-          Markup.button.url('PLUS', `${this.mainBotUrl}?start=itemByID_22`),
-          Markup.button.url('PRO', `${this.mainBotUrl}?start=itemByID_23`),
-          Markup.button.callback('оплачено', 'payment_done'),
-        ]),
-      );
-      return null;
-    }
-
+    const profile = await this.findOrCreateProfile(from, undefined, ctx);
     return profile;
   }
 
@@ -874,28 +768,11 @@ export class TelegramService {
     // общая функция-обработчик команды /profile и текста "profile"
     const profileHandler = async (ctx: Context) => {
       const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
-      if (profile.subscriptionUntil && profile.subscriptionUntil.getTime() <= Date.now()) {
-        if (profile.tokens.plan) {
-          profile.tokens.plan = null;
-          await this.tokensRepo.save(profile.tokens);
-        }
-        await ctx.reply(
-          'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
-          Markup.inlineKeyboard([
-            Markup.button.url('PLUS', `${this.mainBotUrl}?start=itemByID_22`),
-            Markup.button.url('PRO', `${this.mainBotUrl}?start=itemByID_23`),
-            Markup.button.callback('оплачено', 'payment_done'),
-          ]),
-        );
-        return;
-      }
-      const main = await this.findMainUser(Number(profile.telegramId));
 
       const userParts = [] as string[];
-      if (main?.firstName || profile.firstName) userParts.push(main?.firstName ?? profile.firstName);
-      if (main?.lastName) userParts.push(main.lastName);
-      if (main?.username || profile.username) userParts.push(main?.username ?? profile.username);
-      const userInfo = userParts.join(' ').trim();
+      if (profile.firstName) userParts.push(profile.firstName);
+      if (profile.username) userParts.push(`@${profile.username}`);
+      const userInfo = userParts.join(' ').trim() || profile.telegramId;
 
       const message =
         `Данные пользователя: <b>${userInfo}</b>\n` +
@@ -923,249 +800,55 @@ export class TelegramService {
     // поддерживаем вариант без слеша
     this.bot.hears(/^profile$/i, profileHandler);
 
-    // обработка перехода по ссылке с кодом
+    // Упрощённый /start: создаём профиль и приветствуем
     this.bot.start(async (ctx) => {
-      // ctx.startPayload помечен как устаревший,
-      // поэтому при необходимости извлекаем код из текста сообщения
-      const payload = ctx.startPayload ?? (ctx.message && 'text' in ctx.message ? ctx.message.text.replace('/start', '').trim() : undefined);
-      const exists = await this.profileRepo.findOne({
-        where: { telegramId: String(ctx.from.id) },
-      });
-      if (exists) {
-        await ctx.reply('Вы уже зарегистрированы');
-        return;
-      }
-
-      if (!payload) {
-        await ctx.reply('Пожалуйста, перейдите по пригласительной ссылке.');
-        return;
-      }
-
-      this.pendingInvites.set(ctx.from.id, payload);
-      const inviter = await this.findMainUser(Number(payload));
-      if (!inviter) {
-        await ctx.reply('Пригласитель не найден.');
-        return;
-      }
-
-      await ctx.reply(
-        `Вас пригласил пользователь - ${this.getFullName(inviter)}. Вы подтверждаете?`,
-        Markup.inlineKeyboard([Markup.button.callback('Подтвердить', `confirm:${payload}`)]),
-      );
+      await this.findOrCreateProfile(ctx.from, undefined, ctx);
+      await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
     });
 
-    // подтверждение приглашения и создание профиля
-    this.bot.action(/^confirm:(.+)/, async (ctx) => {
-      const inviterId = ctx.match[1];
-      const mainUser = await this.findMainUser(ctx.from.id);
-      if (!mainUser) {
-        const link = this.getMainBotLink(inviterId);
-        await ctx.editMessageText(
-          `Сначала зарегистрируйтесь в основном боте компании по ссылке: ${link}`,
-        );
-        return;
-      }
-
-      await this.findOrCreateProfile(ctx.from, inviterId, ctx);
-      this.pendingInvites.delete(ctx.from.id);
-      await ctx.editMessageText('Регистрация завершена');
-    });
-
-    this.bot.action('invite_link', async (ctx) => {
-      await ctx.answerCbQuery();
-
-      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      const inviteLink = `${this.mainBotUrl}?start=${profile.telegramId}`;
-
-      const qr = await QRCode.toBuffer(inviteLink);
-      // Отправляем QR-код и текст с ссылкой одним сообщением
-      await ctx.replyWithPhoto({ source: qr }, { caption: `Пригласительная ссылка: ${inviteLink}` });
-    });
-
-    // оформление подписки
-    this.bot.action(['subscribe_PLUS', 'subscribe_PRO'], async (ctx) => {
-      await ctx.answerCbQuery();
-      const data = (ctx.callbackQuery as any).data as string;
-      const plan = data === 'subscribe_PLUS' ? 'PLUS' : 'PRO';
-
-      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-
-      const mainUser = await this.findMainUser(Number(profile.telegramId));
-      if (!mainUser) {
-        await ctx.reply('вы не авторизованы, получите приглашение у своего спонсора');
-        return;
-      }
-
-      profile.tokens.pendingPayment = plan as 'PLUS' | 'PRO';
+    // Тестовое пополнение токенов
+    this.bot.command('testAddTokens', async (ctx) => {
+      const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      const add = 1000;
+      profile.tokens.tokens += add;
       await this.tokensRepo.save(profile.tokens);
-
-      await ctx.editMessageText(
-        `Перейдите в Основной бот компании Нейролаб для оплаты подписки ${plan}`,
-        Markup.inlineKeyboard([Markup.button.callback('Открыть', `open_pay_${plan}`)]),
-      );
+      await this.addTransaction(profile, add, 'CREDIT', 'test purchase');
+      await ctx.reply('На ваш счёт зачислено 1000 токенов.');
     });
 
-    this.bot.action(/^open_pay_(PLUS|PRO)$/, async (ctx) => {
-      await ctx.answerCbQuery();
-      const plan = ctx.match[1] as 'PLUS' | 'PRO';
-
-      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-
-      const mainUser = await this.findMainUser(Number(profile.telegramId));
-      if (!mainUser) {
-        await ctx.reply('вы не авторизованы, получите приглашение у своего спонсора');
-        return;
-      }
-
-      if (profile.tokens.pendingPayment !== plan) {
-        profile.tokens.pendingPayment = plan;
+    // Тестовое списание всех токенов
+    this.bot.command('testZeroTokens', async (ctx) => {
+      const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      const currentTokens = profile.tokens.tokens;
+      if (currentTokens > 0) {
+        profile.tokens.tokens = 0;
         await this.tokensRepo.save(profile.tokens);
-      }
-
-      const order = this.orderRepo.create({
-        status: 'Pending',
-        totalAmount: plan === 'PLUS' ? 2000 : 5000,
-        totalPoints: 1,
-        userId: mainUser.id,
-      });
-      await this.orderRepo.save(order);
-
-      const botLink = `${this.mainBotUrl}?start=pay_${plan}`;
-      await ctx.editMessageText(
-        `Перейдите в Основной бот НейроЛаб для оплаты подписки ${plan}`,
-        Markup.inlineKeyboard([Markup.button.url('Открыть', botLink), Markup.button.callback('Я оплатил', `paid_${plan}`)]),
-      );
-    });
-
-    // пополнение баланса по активной подписке
-    this.bot.action('topup', async (ctx) => {
-      await ctx.answerCbQuery();
-      const link = 'https://img.rl0.ru/afisha/e1000x500i/daily.afisha.ru/uploads/images/3/1d/31d91ff715902c15bde808052fa02154.png';
-      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      profile.tokens.pendingPayment = 'TOPUP';
-      await this.tokensRepo.save(profile.tokens);
-
-      await ctx.reply(
-        `Перейдите по ссылке для пополнения баланса: ${link}`,
-        Markup.inlineKeyboard([Markup.button.callback('Я оплатил', 'paid_TOPUP')]),
-      );
-    });
-
-    // подтверждение оплаты
-    this.bot.action(['paid_PLUS', 'paid_PRO', 'paid_TOPUP'], async (ctx) => {
-      await ctx.answerCbQuery();
-      const data = (ctx.callbackQuery as any).data as string;
-      const type = data.replace('paid_', '').toUpperCase();
-      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      if (!profile.tokens.pendingPayment || profile.tokens.pendingPayment !== type) {
-        await ctx.reply('Нет ожидаемого платежа.');
-        return;
-      }
-      profile.tokens.pendingPayment = null;
-      if (type === 'PLUS' || type === 'PRO') {
-        profile.tokens.plan = type as 'PLUS' | 'PRO';
-        const add = type === 'PLUS' ? 1000 : 3500;
-        profile.tokens.tokens += add;
-        const now = new Date();
-        const until = new Date(now);
-        until.setDate(until.getDate() + 30);
-        profile.tokens.dateSubscription = now;
-        profile.tokens.subscriptionUntil = until;
-        profile.dateSubscription = now;
-        profile.subscriptionUntil = until;
-        await this.tokensRepo.save(profile.tokens);
-        await this.profileRepo.save(profile);
-        await this.addTransaction(profile, add, 'CREDIT', `subscription ${type}`);
-        await ctx.editMessageText(`Поздравляем с подпиской ${type}!`);
+        await this.addTransaction(profile, currentTokens, 'DEBIT', 'test zero tokens');
+        await ctx.reply(`Все токены списаны. Списано: ${currentTokens} токенов.`);
       } else {
-        const add = 1000;
-        profile.tokens.tokens += add;
-        await this.tokensRepo.save(profile.tokens);
-        await this.addTransaction(profile, add, 'CREDIT', 'balance topup');
-        await ctx.editMessageText('На ваш счёт зачислено 1000 бонусов');
+        await ctx.reply('У вас уже 0 токенов.');
       }
     });
 
-    // проверка оплаченных заказов в основной БД
-    this.bot.action('payment_done', async (ctx) => {
-      await ctx.answerCbQuery();
-      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      const mainUser = await this.findMainUser(Number(profile.telegramId));
-      if (!mainUser) {
-        await ctx.reply('вы не авторизованы, получите приглашение у спонсора');
+    // Тестовое удаление пользователя и всех связанных данных
+    this.bot.command('testRemoveUser', async (ctx) => {
+      const profile = await this.profileRepo.findOne({
+        where: { telegramId: String(ctx.message.from.id) },
+        relations: ['tokens'],
+      });
+
+      if (!profile) {
+        await ctx.reply('Пользователь не найден в базе данных.');
         return;
       }
 
-      const orders = await this.orderRepo.find({
-        where: { userId: mainUser.id, promind: true },
-      });
-      let processed = 0;
-      for (const order of orders) {
-        const exists = await this.incomeRepo.findOne({
-          where: { mainOrderId: order.id },
-        });
-        if (exists) continue;
-
-        const items = await this.orderItemRepo.find({
-          where: { orderId: order.id },
-          relations: ['item'],
-        });
-        if (items.length === 0) continue;
-
-        const income = await this.incomeRepo.save(
-          this.incomeRepo.create({ mainOrderId: order.id, userId: mainUser.id }),
-        );
-
-        let add = 0;
-        let isSubscription = false;
-        for (const orderItem of items) {
-          const action = (orderItem.item?.promindAction || '').toLowerCase();
-          if (action === 'plus') {
-            add += 1000;
-            profile.tokens.plan = 'PLUS';
-            isSubscription = true;
-          } else if (action === 'pro') {
-            add += 3500;
-            profile.tokens.plan = 'PRO';
-            isSubscription = true;
-          } else if (action === 'tokens') {
-            add += 1000;
-          }
-        }
-
-        if (add === 0) continue;
-
-        const now = new Date();
-        if (isSubscription) {
-          const until = new Date(now);
-          until.setDate(until.getDate() + 30);
-          profile.tokens.dateSubscription = now;
-          profile.tokens.subscriptionUntil = until;
-          profile.dateSubscription = now;
-          profile.subscriptionUntil = until;
-        }
-
-        profile.tokens.tokens += add;
-        await this.tokensRepo.save(profile.tokens);
-        await this.profileRepo.save(profile);
-
-        await this.txRepo.save(
-          this.txRepo.create({
-            userId: profile.id,
-            amount: add,
-            type: 'CREDIT',
-            comment: `order ${order.id}`,
-            orderIncomeId: income.id,
-          }),
-        );
-
-        processed++;
-      }
-
-      if (processed > 0) {
-        await ctx.reply(`Обработано заказов: ${processed}`);
-      } else {
-        await ctx.reply('Новых оплаченных заказов не найдено');
+      try {
+        // Удаляем профиль пользователя (каскадное удаление удалит связанные записи)
+        await this.profileRepo.remove(profile);
+        await ctx.reply('Пользователь и все связанные данные успешно удалены из базы данных.');
+      } catch (error) {
+        this.logger.error('Ошибка при удалении пользователя', error);
+        await ctx.reply('Произошла ошибка при удалении пользователя.');
       }
     });
 

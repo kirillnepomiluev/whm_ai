@@ -31,21 +31,6 @@ import { VideoModule } from './video/video.module';
         // migrationsRun: true,
       }),
     }),
-    // Подключение к основной базе данных проекта
-    TypeOrmModule.forRootAsync({
-      name: 'mainDb',
-      inject: [ConfigService],
-      useFactory: (cfg: ConfigService) => ({
-        type: 'postgres',
-        host: cfg.get<string>('MAIN_DB_HOST'),
-        port: Number(cfg.get<string>('MAIN_DB_PORT')),
-        username: cfg.get<string>('MAIN_DB_USER'),
-        password: cfg.get<string>('MAIN_DB_PASS'),
-        database: cfg.get<string>('MAIN_DB_NAME'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: false,
-      }),
-    }),
     TelegramModule,
     OpenaiModule,
     VoiceModule,

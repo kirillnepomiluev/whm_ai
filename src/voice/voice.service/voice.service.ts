@@ -38,7 +38,7 @@ export class VoiceService {
     // Инициализируем клиента OpenAI, используя переданный ConfigService
     this.client = new OpenAI({
       apiKey: this.configService.get<string>('OPENAI_API_KEY_PRO'),
-      baseURL: 'https://chat.neurolabtg.ru/v1',
+      baseURL: 'https://ai.1devfull.store/v1',
     });
   }
 
