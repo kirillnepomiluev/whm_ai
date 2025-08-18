@@ -1,0 +1,59 @@
+server {
+    listen 80;
+    server_name chat.neurolabtg.ru www.chat.neurolabtg.ru;
+
+    # Перенаправляем все запросы с 80 порта на HTTPS (443)
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2; 
+    server_name chat.neurolabtg.ru www.chat.neurolabtg.ru;
+
+    # Путь к сертификату и ключу
+    ssl_certificate /etc/nginx/ssl/neurolabtg.ru_cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/neurolabtg.ru_private_key.pem;
+
+    # Рекомендуемые SSL-настройки, например:
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # Увеличиваем допустимый размер тела запроса для загрузки аудио
+    client_max_body_size 50m;
+
+    # HTTP/2 может быть включён при использовании listen 443 ssl http2;
+    # Остальная конфигурация вашего сайта:
+    # root /var/www/html;
+    # index index.html index.htm;
+
+    # ssl_ciphers         HIGH:!aNULL:!MD5;
+    # ssl_prefer_server_ciphers on;
+
+    location / {
+        # Использовать HTTP/1.1, чтобы chunked body передавался
+        proxy_http_version 1.1;
+        # Убрать заголовок Connection, иначе Nginx приставляет keep-alive
+        proxy_set_header Connection "";
+
+        # Не буферизовать запросы и ответы
+        proxy_request_buffering off;
+        proxy_buffering off;
+
+        # Пробросить все оригинальные заголовки, в т.ч. Authorization и Content-Type
+        proxy_pass_request_headers on;
+        proxy_set_header Host              api.openai.com;
+        proxy_set_header Authorization     $http_authorization;
+        proxy_set_header Content-Type      $http_content_type;
+
+        # Сам прокси
+        proxy_pass https://api.openai.com;
+        proxy_ssl_server_name on;
+
+        # Чуть больше таймауты (по желанию)
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}

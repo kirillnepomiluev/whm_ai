@@ -1,0 +1,28 @@
+scp -r c:\devfull\whm\whm_ai\forProxi\ssl root@195.133.21.16:/etc/nginx/  - это для прокси сервера
+C:\devfull\neuro_lab\nest_back\neuro_nest\fornginx\forProxi\ssl
+sudo systemctl restart nginx
+
+o@yec9ZYE8#Q#a
+ssh root@195.133.21.16
+scp -r C:\devfull\neuro_lab\nest_back\neuro_nest\fornginx\forProxi\ssl root@195.133.21.16:/etc/nginx/
+  - это для прокси сервера
+
+sudo chmod 600 /etc/nginx/ssl
+
+
+до настройки сертификатов:
+scp  c:\devfull\whm\whm_ai\forProxi\forSettings\ai.1devfull.store root@195.133.21.16:/etc/nginx/sites-available/
+
+после настройки сертификатов:
+scp  c:\devfull\whm\whm_ai\forProxi\ai.1devfull.store root@195.133.21.16:/etc/nginx/sites-available/
+
+sudo ln -s /etc/nginx/sites-available/ai.1devfull.store /etc/nginx/sites-enabled/
+
+
+
+
+
+
+scp  /Users/kirillnepomiluev/dev/neuro/fornginx/forProxi/ai.1devfull.store root@195.133.21.16:/etc/nginx/sites-available/
+
+ssh-keygen -t rsa -b 4096 -C "keyToProxy"

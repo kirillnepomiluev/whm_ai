@@ -1,0 +1,35 @@
+server {
+    listen 80;
+    server_name ai.1devfull.store www.ai.1devfull.store;
+
+    # Отдаём challenge-файлы напрямую (важно для HTTP-01)
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type "text/plain";
+        allow all;
+    }
+
+    # Всё остальное — твой текущий прокси на OpenAI (если нужно сразу)
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_pass_request_headers on;
+
+        proxy_set_header Host              api.openai.com;
+        proxy_set_header Authorization     $http_authorization;
+        proxy_set_header Content-Type      $http_content_type;
+        proxy_set_header Content-Length    $http_content_length;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_pass https://api.openai.com;
+        proxy_ssl_server_name on;
+
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
