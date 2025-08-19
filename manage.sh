@@ -16,21 +16,6 @@ NC='\033[0m'
 # Переменные
 PROJECT_NAME="whm_ai"
 
-# Определяем путь к проекту
-# Сначала проверяем, находимся ли мы уже в директории проекта
-if [ -f "package.json" ] && [ -f "src" ]; then
-    PROJECT_DIR="$(pwd)"
-    log "Проект найден в текущей директории: $PROJECT_DIR"
-# Затем проверяем, есть ли проект в текущей директории
-elif [ -d "$PROJECT_NAME" ] && [ -f "$PROJECT_NAME/package.json" ]; then
-    PROJECT_DIR="$(pwd)/$PROJECT_NAME"
-    log "Проект найден в поддиректории: $PROJECT_DIR"
-# Иначе ищем в домашней директории
-else
-    PROJECT_DIR="$HOME/$PROJECT_NAME"
-    log "Проект будет искаться в: $PROJECT_DIR"
-fi
-
 # Функция для логирования
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
@@ -43,6 +28,21 @@ warn() {
 error() {
     echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"
 }
+
+# Определяем путь к проекту
+# Сначала проверяем, находимся ли мы уже в директории проекта
+if [ -f "package.json" ] && [ -d "src" ]; then
+    PROJECT_DIR="$(pwd)"
+    log "Проект найден в текущей директории: $PROJECT_DIR"
+# Затем проверяем, есть ли проект в текущей директории
+elif [ -d "$PROJECT_NAME" ] && [ -f "$PROJECT_NAME/package.json" ]; then
+    PROJECT_DIR="$(pwd)/$PROJECT_NAME"
+    log "Проект найден в поддиректории: $PROJECT_DIR"
+# Иначе ищем в домашней директории
+else
+    PROJECT_DIR="$HOME/$PROJECT_NAME"
+    log "Проект будет искаться в: $PROJECT_DIR"
+fi
 
 # Проверка существования проекта
 if [ ! -d "$PROJECT_DIR" ]; then
