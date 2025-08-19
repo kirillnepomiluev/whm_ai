@@ -13,7 +13,12 @@ NC='\033[0m'
 
 # Переменные
 PROJECT_NAME="whm_ai"
-PROJECT_DIR="/home/$(whoami)/$PROJECT_NAME"
+PROJECT_DIR="$(pwd)/$PROJECT_NAME"
+
+# Если мы не в корневой директории, попробуем найти проект в домашней директории
+if [ ! -d "$PROJECT_DIR" ]; then
+    PROJECT_DIR="$HOME/$PROJECT_NAME"
+fi
 
 # Функция для логирования
 log() {

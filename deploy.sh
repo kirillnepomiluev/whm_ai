@@ -29,7 +29,7 @@ error() {
 
 # Переменные
 PROJECT_NAME="whm_ai"
-PROJECT_DIR="/home/$(whoami)/$PROJECT_NAME"
+PROJECT_DIR="$HOME/$PROJECT_NAME"
 GITHUB_REPO="https://github.com/kirillnepomiluev/whm_ai.git"
 GITHUB_BRANCH="master"
 
