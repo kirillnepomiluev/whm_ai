@@ -179,6 +179,26 @@ export class OpenAiService {
       apiKey: key, // Используем тот же ключ для fallback
       baseURL: 'https://api.openai.com/v1', // Fallback на официальный OpenAI API
     });
+
+    // Автоматически очищаем поврежденные треды при старте
+    this.cleanupCorruptedThreadsOnStartup();
+  }
+
+  /**
+   * Автоматически очищает поврежденные треды при старте сервиса
+   */
+  private async cleanupCorruptedThreadsOnStartup() {
+    try {
+      this.logger.log('Запускаю автоматическую очистку поврежденных тредов...');
+      const result = await this.cleanupCorruptedThreads();
+      if (result.cleaned > 0) {
+        this.logger.log(`Автоматически очищено ${result.cleaned} поврежденных тредов`);
+      } else {
+        this.logger.log('Поврежденных тредов не найдено');
+      }
+    } catch (error) {
+      this.logger.error('Ошибка при автоматической очистке тредов:', error);
+    }
   }
 
   /**
@@ -296,13 +316,27 @@ export class OpenAiService {
     try {
       if (!threadId) {
         // Создаем новый тред, если не существует
+        this.logger.log(`Создаю новый тред для пользователя ${userId}`);
         thread = await this.openAi.beta.threads.create();
         threadId = thread.id;
         this.threadMap.set(userId, threadId);
         await this.sessionService.setSessionId(userId, threadId);
+        this.logger.log(`Создан новый тред ${threadId} для пользователя ${userId}`);
       } else {
-        // Если тред уже есть, просто получаем его ID
-        thread = { id: threadId };
+        // Если тред уже есть, проверяем его существование
+        this.logger.log(`Использую существующий тред ${threadId} для пользователя ${userId}`);
+        try {
+          const client = await this.getActiveOpenAiClient();
+          await client.beta.threads.retrieve(threadId);
+          thread = { id: threadId };
+        } catch (error) {
+          this.logger.warn(`Тред ${threadId} не найден, создаю новый`, error);
+          thread = await this.openAi.beta.threads.create();
+          threadId = thread.id;
+          this.threadMap.set(userId, threadId);
+          await this.sessionService.setSessionId(userId, threadId);
+          this.logger.log(`Создан новый тред ${threadId} для пользователя ${userId}`);
+        }
       }
 
       // Используем систему блокировки тредов
@@ -311,44 +345,66 @@ export class OpenAiService {
         await this.checkAndWaitForActiveRuns(threadId);
 
         return await this.executeWithRetry(async (client) => {
-          // Добавляем сообщение пользователя в тред
-          await client.beta.threads.messages.create(thread.id, {
-            role: 'user',
-            content: content,
-          });
+          try {
+            // Проверяем доступность ассистента
+            this.logger.log(`Проверяю доступность ассистента ${assistantId}...`);
+            try {
+              const assistant = await client.beta.assistants.retrieve(assistantId);
+              this.logger.log(`Ассистент ${assistantId} доступен: ${assistant.name || 'Без имени'}`);
+            } catch (error) {
+              this.logger.error(`Ассистент ${assistantId} недоступен:`, error);
+              throw new Error(`Ассистент недоступен: ${error.message}`);
+            }
 
-          // Генерируем ответ ассистента по треду
-          this.logger.log(`Запускаю Run для ассистента ${assistantId}...`);
-          const response = await client.beta.threads.runs.createAndPoll(
-            thread.id,
-            {
-              assistant_id: assistantId,
-            },
-          );
-          
-          this.logger.log(`Run завершен со статусом: ${response.status}`);
-          
-          if (response.status === 'completed') {
-            const messages = await client.beta.threads.messages.list(
-              response.thread_id,
+            // Добавляем сообщение пользователя в тред
+            this.logger.log(`Добавляю сообщение пользователя в тред ${thread.id}`);
+            await client.beta.threads.messages.create(thread.id, {
+              role: 'user',
+              content: content,
+            });
+
+            // Генерируем ответ ассистента по треду
+            this.logger.log(`Запускаю Run для ассистента ${assistantId} в треде ${thread.id}...`);
+            const response = await client.beta.threads.runs.createAndPoll(
+              thread.id,
+              {
+                assistant_id: assistantId,
+              },
             );
-            const assistantMessage = messages.data[0];
-            this.logger.log(`Получен ответ от ассистента, длина: ${JSON.stringify(assistantMessage.content).length} символов`);
-            return await this.buildAnswer(assistantMessage);
-          } else if (response.status === 'failed') {
-            // Получаем детали ошибки
-            const errorDetails = await this.getRunErrorDetails(client, thread.id, response.id);
-            this.logger.error(`Run failed с деталями:`, errorDetails);
             
-            // Проверяем, есть ли детали ошибки
-            if (errorDetails?.lastError) {
-              throw new Error(`Run failed: ${errorDetails.lastError.code} - ${errorDetails.lastError.message}`);
+            this.logger.log(`Run завершен со статусом: ${response.status}`);
+            
+            if (response.status === 'completed') {
+              const messages = await client.beta.threads.messages.list(
+                response.thread_id,
+              );
+              const assistantMessage = messages.data[0];
+              this.logger.log(`Получен ответ от ассистента, длина: ${JSON.stringify(assistantMessage.content).length} символов`);
+              return await this.buildAnswer(assistantMessage);
+            } else if (response.status === 'failed') {
+              // Получаем детали ошибки
+              const errorDetails = await this.getRunErrorDetails(client, thread.id, response.id);
+              this.logger.error(`Run failed с деталями:`, errorDetails);
+              
+              // Проверяем, есть ли детали ошибки
+              if (errorDetails?.lastError) {
+                throw new Error(`Run failed: ${errorDetails.lastError.code} - ${errorDetails.lastError.message}`);
+              } else {
+                throw new Error(`Run завершился со статусом: ${response.status}`);
+              }
+            } else if (response.status === 'requires_action') {
+              this.logger.warn(`Run требует действия: ${JSON.stringify(response.required_action)}`);
+              throw new Error(`Run требует действия: ${response.required_action?.type || 'неизвестно'}`);
+            } else if (response.status === 'expired') {
+              this.logger.warn(`Run истек`);
+              throw new Error(`Run истек`);
             } else {
+              this.logger.warn(`Run завершился со статусом: ${response.status}`);
               throw new Error(`Run завершился со статусом: ${response.status}`);
             }
-          } else {
-            this.logger.warn(`Run завершился со статусом: ${response.status}`);
-            throw new Error(`Run завершился со статусом: ${response.status}`);
+          } catch (error) {
+            this.logger.error(`Ошибка при обработке сообщения в треде ${thread.id}:`, error);
+            throw error;
           }
         });
       });
@@ -363,8 +419,33 @@ export class OpenAiService {
         };
       }
       
+      // Проверяем тип ошибки и даем более конкретный ответ
+      if (error instanceof Error) {
+        if (error.message.includes('Run failed')) {
+          return {
+            text: '🤖 Не удалось получить ответ от ассистента. Возможно, есть проблемы с OpenAI API. Попробуйте позже.',
+            files: [],
+          };
+        } else if (error.message.includes('Ассистент недоступен')) {
+          return {
+            text: '🤖 Ассистент временно недоступен. Попробуйте позже или обратитесь к администратору.',
+            files: [],
+          };
+        } else if (error.message.includes('Run требует действия')) {
+          return {
+            text: '🤖 Ассистент требует дополнительных действий. Попробуйте переформулировать вопрос.',
+            files: [],
+          };
+        } else if (error.message.includes('Run истек')) {
+          return {
+            text: '🤖 Время ожидания ответа истекло. Попробуйте отправить сообщение еще раз.',
+            files: [],
+          };
+        }
+      }
+      
       return {
-        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже или обратитесь к администратору.',
         files: [],
       };
     }
@@ -785,5 +866,57 @@ export class OpenAiService {
   async forceCheckMainApi(): Promise<boolean> {
     this.lastMainApiCheck = 0; // Сбрасываем таймер
     return await this.checkMainApiAvailability();
+  }
+
+  /**
+   * Проверяет состояние ассистента
+   */
+  async checkAssistantStatus(assistantId: string = 'asst_q6l4je76YrzysIxzH8rHoXGx'): Promise<any> {
+    try {
+      const client = await this.getActiveOpenAiClient();
+      const assistant = await client.beta.assistants.retrieve(assistantId);
+      
+      return {
+        id: assistant.id,
+        name: assistant.name,
+        description: assistant.description,
+        model: assistant.model,
+        instructions: assistant.instructions,
+        tools: assistant.tools,
+        fileIds: (assistant as any).file_ids || [],
+        metadata: assistant.metadata,
+        createdAt: assistant.created_at,
+        status: 'available'
+      };
+    } catch (error) {
+      this.logger.error(`Ошибка при проверке ассистента ${assistantId}:`, error);
+      return {
+        id: assistantId,
+        status: 'unavailable',
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Очищает поврежденные треды
+   */
+  async cleanupCorruptedThreads(): Promise<{ cleaned: number; errors: number }> {
+    let cleaned = 0;
+    let errors = 0;
+    
+    for (const [userId, threadId] of this.threadMap.entries()) {
+      try {
+        const client = await this.getActiveOpenAiClient();
+        await client.beta.threads.retrieve(threadId);
+      } catch (error) {
+        this.logger.warn(`Тред ${threadId} поврежден, удаляю из кэша`, error);
+        this.threadMap.delete(userId);
+        await this.sessionService.clearSession(userId);
+        cleaned++;
+      }
+    }
+    
+    return { cleaned, errors };
   }
 }

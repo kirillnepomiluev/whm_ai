@@ -50,4 +50,19 @@ export class AppController {
       }
     };
   }
+
+  @Get('api/assistant/status')
+  async getAssistantStatus() {
+    return await this.openAiService.checkAssistantStatus();
+  }
+
+  @Post('api/threads/cleanup')
+  async cleanupCorruptedThreads() {
+    const result = await this.openAiService.cleanupCorruptedThreads();
+    return {
+      success: true,
+      message: `Очищено ${result.cleaned} поврежденных тредов`,
+      result
+    };
+  }
 }
