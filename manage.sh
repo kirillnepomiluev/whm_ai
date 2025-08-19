@@ -15,11 +15,20 @@ NC='\033[0m'
 
 # Переменные
 PROJECT_NAME="whm_ai"
-PROJECT_DIR="$(pwd)/$PROJECT_NAME"
 
-# Если мы не в корневой директории, попробуем найти проект в домашней директории
-if [ ! -d "$PROJECT_DIR" ]; then
+# Определяем путь к проекту
+# Сначала проверяем, находимся ли мы уже в директории проекта
+if [ -f "package.json" ] && [ -f "src" ]; then
+    PROJECT_DIR="$(pwd)"
+    log "Проект найден в текущей директории: $PROJECT_DIR"
+# Затем проверяем, есть ли проект в текущей директории
+elif [ -d "$PROJECT_NAME" ] && [ -f "$PROJECT_NAME/package.json" ]; then
+    PROJECT_DIR="$(pwd)/$PROJECT_NAME"
+    log "Проект найден в поддиректории: $PROJECT_DIR"
+# Иначе ищем в домашней директории
+else
     PROJECT_DIR="$HOME/$PROJECT_NAME"
+    log "Проект будет искаться в: $PROJECT_DIR"
 fi
 
 # Функция для логирования
@@ -56,8 +65,9 @@ show_menu() {
     echo "6. Обновить код с GitHub"
     echo "7. Пересобрать и перезапустить"
     echo "8. Проверить подключение к базе данных"
-    echo "9. Отредактировать .env файл"
-    echo "10. Показать использование ресурсов"
+echo "9. Отредактировать .env файл"
+echo "10. Показать использование ресурсов"
+echo "11. Первый запуск проекта"
     echo "0. Выход"
     echo "=========================================="
     echo -n "Выберите действие: "
@@ -69,7 +79,12 @@ show_status() {
     pm2 status
     echo ""
     log "Статус базы данных:"
-    docker-compose -f "$PROJECT_DIR/docker-compose.yml" ps
+    if [ -f "$PROJECT_DIR/.env" ]; then
+        log "Настройки внешней базы данных:"
+        grep -E "^(DATABASE_|DB_|MAIN_DB_)" "$PROJECT_DIR/.env" | head -10
+    else
+        warn "Файл .env не найден"
+    fi
 }
 
 # Функция показа логов
@@ -95,8 +110,28 @@ stop_app() {
 # Функция запуска
 start_app() {
     log "Запускаем приложение..."
-    pm2 start $PROJECT_NAME
-    log "Приложение запущено"
+    
+    # Проверяем, есть ли приложение в PM2
+    if pm2 list | grep -q "$PROJECT_NAME"; then
+        pm2 start $PROJECT_NAME
+        log "Приложение запущено"
+    else
+        log "Приложение не найдено в PM2, запускаем в первый раз..."
+        
+        # Переходим в директорию проекта
+        cd "$PROJECT_DIR"
+        
+        # Проверяем, собран ли проект
+        if [ ! -d "dist" ]; then
+            log "Проект не собран, собираем..."
+            npm install
+            npm run build
+        fi
+        
+        # Запускаем через PM2
+        pm2 start npm --name "$PROJECT_NAME" -- run start:prod
+        log "Приложение запущено в первый раз"
+    fi
 }
 
 # Функция обновления кода
@@ -154,6 +189,45 @@ show_resources() {
     free -h
 }
 
+# Функция первого запуска проекта
+first_run() {
+    log "Первый запуск проекта..."
+    
+    if [ ! -d "$PROJECT_DIR" ]; then
+        error "Директория проекта не найдена: $PROJECT_DIR"
+        return 1
+    fi
+    
+    # Переходим в директорию проекта
+    cd "$PROJECT_DIR"
+    
+    # Проверяем, есть ли package.json
+    if [ ! -f "package.json" ]; then
+        error "Файл package.json не найден. Убедитесь, что проект клонирован правильно."
+        return 1
+    fi
+    
+    # Устанавливаем зависимости
+    log "Устанавливаем зависимости Node.js..."
+    npm install
+    
+    # Собираем проект
+    log "Собираем проект..."
+    npm run build
+    
+    # Запускаем через PM2
+    log "Запускаем проект через PM2..."
+    pm2 start npm --name "$PROJECT_NAME" -- run start:prod
+    
+    # Настраиваем автозапуск
+    log "Настраиваем автозапуск PM2..."
+    pm2 startup
+    pm2 save
+    
+    log "✅ Проект успешно запущен в первый раз!"
+    log "Используйте 'pm2 status' для проверки статуса"
+}
+
 # Основной цикл
 while true; do
     show_menu
@@ -189,6 +263,9 @@ while true; do
             ;;
         10)
             show_resources
+            ;;
+        11)
+            first_run
             ;;
         0)
             log "Выход из менеджера"

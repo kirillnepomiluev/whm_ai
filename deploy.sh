@@ -29,7 +29,16 @@ error() {
 
 # Переменные
 PROJECT_NAME="whm_ai"
-PROJECT_DIR="$HOME/$PROJECT_NAME"
+
+# Определяем путь к проекту
+# Если мы находимся в директории проекта, используем её
+if [ -f "package.json" ] && [ -d "src" ]; then
+    PROJECT_DIR="$(pwd)"
+    log "Проект найден в текущей директории: $PROJECT_DIR"
+else
+    PROJECT_DIR="$HOME/$PROJECT_NAME"
+    log "Проект будет развернут в: $PROJECT_DIR"
+fi
 GITHUB_REPO="https://github.com/kirillnepomiluev/whm_ai.git"
 GITHUB_BRANCH="master"
 
@@ -66,14 +75,8 @@ nvm alias default node
 log "Устанавливаем PM2..."
 npm install -g pm2
 
-# 5. Установка Docker (опционально, для будущего использования)
-log "Проверяем Docker..."
-if ! command -v docker &> /dev/null; then
-    log "Docker не установлен. Установка пропущена (будет использоваться внешняя БД)"
-    log "Для установки Docker выполните: sudo apt install docker.io docker-compose"
-else
-    log "Docker уже установлен"
-fi
+# 5. Docker не устанавливается (используется внешняя БД)
+log "Docker не устанавливается - используется внешняя база данных"
 
 # 6. Генерация SSH ключа для GitHub
 log "Генерируем SSH ключ для GitHub..."
@@ -108,12 +111,17 @@ ssh -T git@github.com || {
 
 # 9. Клонирование репозитория
 log "Клонируем репозиторий..."
-if [ -d "$PROJECT_DIR" ]; then
-    log "Проект уже существует, обновляем..."
+if [ -d "$PROJECT_DIR" ] && [ "$PROJECT_DIR" != "$(pwd)" ]; then
+    log "Проект уже существует в $PROJECT_DIR, обновляем..."
     cd "$PROJECT_DIR"
     git fetch origin
     git reset --hard origin/$GITHUB_BRANCH
+elif [ -f "package.json" ] && [ -d "src" ]; then
+    log "Проект найден в текущей директории, обновляем..."
+    git fetch origin
+    git reset --hard origin/$GITHUB_BRANCH
 else
+    log "Клонируем новый репозиторий..."
     cd ~
     git clone -b $GITHUB_BRANCH $GITHUB_REPO $PROJECT_NAME
     cd "$PROJECT_DIR"
@@ -126,8 +134,13 @@ npm install
 # 11. Создание .env файла
 log "Создаем .env файл..."
 if [ ! -f .env ]; then
-    cp example.env .env
-    log "Файл .env создан из example.env"
+    if [ -f "example.env" ]; then
+        cp example.env .env
+        log "Файл .env создан из example.env"
+    else
+        log "Файл example.env не найден, создаем пустой .env"
+        touch .env
+    fi
     warn "ВАЖНО: Отредактируйте файл .env и добавьте все необходимые ключи и настройки!"
     echo "Команда для редактирования: nano .env"
 else
@@ -143,21 +156,24 @@ log "Проверьте настройки: DATABASE_HOST, DATABASE_PORT, DB_USE
 log "Собираем проект..."
 npm run build
 
-# 14. Запуск через PM2
-log "Запускаем проект через PM2..."
-pm2 delete $PROJECT_NAME 2>/dev/null || true
-pm2 start npm --name $PROJECT_NAME -- run start:prod
+# 14. Запуск через PM2 (если не запущен)
+log "Проверяем статус PM2..."
+if pm2 list | grep -q "$PROJECT_NAME"; then
+    log "Приложение уже запущено в PM2, перезапускаем..."
+    pm2 restart $PROJECT_NAME
+else
+    log "Запускаем проект через PM2 в первый раз..."
+    pm2 start npm --name $PROJECT_NAME -- run start:prod
+    pm2 save
+    pm2 startup
+fi
 
-# 15. Сохранение PM2 конфигурации
-pm2 save
-pm2 startup
-
-# 16. Проверка статуса
+# 15. Проверка статуса
 log "Проверяем статус приложения..."
 pm2 status
 pm2 logs $PROJECT_NAME --lines 10
 
-# 17. Финальная информация
+# 16. Финальная информация
 echo ""
 echo "=========================================="
 echo "РАЗВЕРТЫВАНИЕ ЗАВЕРШЕНО УСПЕШНО!"
@@ -165,7 +181,7 @@ echo "=========================================="
 echo ""
 echo "Проект: $PROJECT_NAME"
 echo "Директория: $PROJECT_DIR"
-echo "Статус: $(pm2 jlist | jq -r '.[] | select(.name=="'$PROJECT_NAME'") | .pm2_env.status')"
+echo "Статус: $(pm2 jlist | jq -r '.[] | select(.name=="'$PROJECT_NAME'") | .pm2_env.status // "unknown"')"
 echo ""
 echo "Полезные команды:"
 echo "  Просмотр логов: pm2 logs $PROJECT_NAME"
