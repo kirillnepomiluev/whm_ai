@@ -28,4 +28,26 @@ export class AppController {
       message: isAvailable ? 'Основной API доступен' : 'Основной API недоступен, используется fallback'
     };
   }
+
+  @Get('api/threads/status')
+  getThreadsStatus() {
+    return this.openAiService.getActiveThreadsStatus();
+  }
+
+  @Get('api/health')
+  getHealth() {
+    const apiStatus = this.openAiService.getApiStatus();
+    const threadsStatus = this.openAiService.getActiveThreadsStatus();
+    
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      openai: apiStatus,
+      threads: {
+        count: threadsStatus.length,
+        active: threadsStatus.filter(t => t.isActive).length,
+        inactive: threadsStatus.filter(t => !t.isActive).length
+      }
+    };
+  }
 }

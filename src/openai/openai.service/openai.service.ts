@@ -318,6 +318,7 @@ export class OpenAiService {
           });
 
           // Генерируем ответ ассистента по треду
+          this.logger.log(`Запускаю Run для ассистента ${assistantId}...`);
           const response = await client.beta.threads.runs.createAndPoll(
             thread.id,
             {
@@ -325,12 +326,26 @@ export class OpenAiService {
             },
           );
           
+          this.logger.log(`Run завершен со статусом: ${response.status}`);
+          
           if (response.status === 'completed') {
             const messages = await client.beta.threads.messages.list(
               response.thread_id,
             );
             const assistantMessage = messages.data[0];
+            this.logger.log(`Получен ответ от ассистента, длина: ${JSON.stringify(assistantMessage.content).length} символов`);
             return await this.buildAnswer(assistantMessage);
+          } else if (response.status === 'failed') {
+            // Получаем детали ошибки
+            const errorDetails = await this.getRunErrorDetails(client, thread.id, response.id);
+            this.logger.error(`Run failed с деталями:`, errorDetails);
+            
+            // Проверяем, есть ли детали ошибки
+            if (errorDetails?.lastError) {
+              throw new Error(`Run failed: ${errorDetails.lastError.code} - ${errorDetails.lastError.message}`);
+            } else {
+              throw new Error(`Run завершился со статусом: ${response.status}`);
+            }
           } else {
             this.logger.warn(`Run завершился со статусом: ${response.status}`);
             throw new Error(`Run завершился со статусом: ${response.status}`);
@@ -485,12 +500,31 @@ export class OpenAiService {
             },
           );
           
+          this.logger.log(`Run завершен со статусом: ${response.status}`);
+          
           if (response.status === 'completed') {
             const messages = await client.beta.threads.messages.list(
               response.thread_id,
             );
             const assistantMessage = messages.data[0];
+            this.logger.log(`Получен ответ от ассистента, длина: ${JSON.stringify(assistantMessage.content).length} символов`);
             return await this.buildAnswer(assistantMessage);
+          } else if (response.status === 'failed') {
+            // Получаем детали ошибки
+            const runDetails = await client.beta.threads.runs.retrieve(thread.id, response.id);
+            this.logger.error(`Run failed с деталями:`, {
+              status: response.status,
+              lastError: runDetails.last_error,
+              requiredAction: runDetails.required_action,
+              expiresAt: runDetails.expires_at
+            });
+            
+            // Проверяем, есть ли детали ошибки
+            if (runDetails.last_error) {
+              throw new Error(`Run failed: ${runDetails.last_error.code} - ${runDetails.last_error.message}`);
+            } else {
+              throw new Error(`Run завершился со статусом: ${response.status}`);
+            }
           } else {
             this.logger.warn(`Run завершился со статусом: ${response.status}`);
             throw new Error(`Run завершился со статусом: ${response.status}`);
@@ -591,46 +625,76 @@ export class OpenAiService {
         thread = { id: threadId };
       }
 
+      this.logger.log(`Обрабатываю файл ${filename} (${fileBuffer.length} байт) для пользователя ${userId}`);
+
       // Используем систему блокировки тредов
       return await this.lockThread(threadId, async () => {
         // Проверяем активные runs в треде
         await this.checkAndWaitForActiveRuns(threadId);
 
         return await this.executeWithRetry(async (client) => {
-          // загружаем файл для ассистента
-          const fileObj = await toFile(fileBuffer, filename);
-          const file = await client.files.create({
-            file: fileObj,
-            purpose: 'assistants',
-          });
+          try {
+            // загружаем файл для ассистента
+            this.logger.log(`Загружаю файл ${filename} в OpenAI API...`);
+            const fileObj = await toFile(fileBuffer, filename);
+            const file = await client.files.create({
+              file: fileObj,
+              purpose: 'assistants',
+            });
+            this.logger.log(`Файл ${filename} успешно загружен, ID: ${file.id}`);
 
-          await client.beta.threads.messages.create(thread.id, {
-            role: 'user',
-            content,
-            attachments: [
+            await client.beta.threads.messages.create(thread.id, {
+              role: 'user',
+              content,
+              attachments: [
+                {
+                  file_id: file.id,
+                  tools: [{ type: 'file_search' }],
+                },
+              ],
+            });
+            this.logger.log(`Сообщение с файлом добавлено в тред ${thread.id}`);
+
+            this.logger.log(`Запускаю Run для ассистента ${assistantId}...`);
+            const response = await client.beta.threads.runs.createAndPoll(
+              thread.id,
               {
-                file_id: file.id,
-                tools: [{ type: 'file_search' }],
+                assistant_id: assistantId,
               },
-            ],
-          });
-
-          const response = await client.beta.threads.runs.createAndPoll(
-            thread.id,
-            {
-              assistant_id: assistantId,
-            },
-          );
-          
-          if (response.status === 'completed') {
-            const messages = await client.beta.threads.messages.list(
-              response.thread_id,
             );
-            const assistantMessage = messages.data[0];
-            return await this.buildAnswer(assistantMessage);
-          } else {
-            this.logger.warn(`Run завершился со статусом: ${response.status}`);
-            throw new Error(`Run завершился со статусом: ${response.status}`);
+            
+            this.logger.log(`Run завершен со статусом: ${response.status}`);
+            
+            if (response.status === 'completed') {
+              const messages = await client.beta.threads.messages.list(
+                response.thread_id,
+              );
+              const assistantMessage = messages.data[0];
+              this.logger.log(`Получен ответ от ассистента, длина: ${JSON.stringify(assistantMessage.content).length} символов`);
+              return await this.buildAnswer(assistantMessage);
+            } else if (response.status === 'failed') {
+              // Получаем детали ошибки
+              const runDetails = await client.beta.threads.runs.retrieve(thread.id, response.id);
+              this.logger.error(`Run failed с деталями:`, {
+                status: response.status,
+                lastError: runDetails.last_error,
+                requiredAction: runDetails.required_action,
+                expiresAt: runDetails.expires_at
+              });
+              
+              // Проверяем, есть ли детали ошибки
+              if (runDetails.last_error) {
+                throw new Error(`Run failed: ${runDetails.last_error.code} - ${runDetails.last_error.message}`);
+              } else {
+                throw new Error(`Run завершился со статусом: ${response.status}`);
+              }
+            } else {
+              this.logger.warn(`Run завершился со статусом: ${response.status}`);
+              throw new Error(`Run завершился со статусом: ${response.status}`);
+            }
+          } catch (error) {
+            this.logger.error(`Ошибка при обработке файла ${filename}:`, error);
+            throw error;
           }
         });
       });
@@ -645,10 +709,45 @@ export class OpenAiService {
         };
       }
       
+      // Проверяем тип ошибки и даем более конкретный ответ
+      if (error instanceof Error) {
+        if (error.message.includes('Run failed')) {
+          return {
+            text: '🤖 Не удалось обработать файл. Возможно, формат файла не поддерживается или файл слишком большой. Попробуйте отправить файл в другом формате (например, PDF или TXT).',
+            files: [],
+          };
+        } else if (error.message.includes('file size')) {
+          return {
+            text: '📁 Файл слишком большой для обработки. Максимальный размер: 100MB.',
+            files: [],
+          };
+        }
+      }
+      
       return {
-        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже или обратитесь к администратору.',
         files: [],
       };
+    }
+  }
+
+  /**
+   * Получает детальную информацию об ошибке Run
+   */
+  private async getRunErrorDetails(client: OpenAI, threadId: string, runId: string): Promise<any> {
+    try {
+      const runDetails = await client.beta.threads.runs.retrieve(threadId, runId);
+      return {
+        status: runDetails.status,
+        lastError: runDetails.last_error,
+        requiredAction: runDetails.required_action,
+        expiresAt: runDetails.expires_at,
+        startedAt: runDetails.started_at,
+        completedAt: runDetails.completed_at
+      };
+    } catch (error) {
+      this.logger.error('Ошибка при получении деталей Run:', error);
+      return null;
     }
   }
 

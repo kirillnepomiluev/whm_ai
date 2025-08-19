@@ -701,6 +701,25 @@ export class TelegramService {
         if (!user) return;
 
         const doc = ctx.message.document;
+        
+        // Проверяем размер файла (максимум 100MB)
+        const maxFileSize = 100 * 1024 * 1024; // 100MB в байтах
+        if (doc.file_size && doc.file_size > maxFileSize) {
+          await ctx.reply(`📁 Файл слишком большой (${(doc.file_size / 1024 / 1024).toFixed(1)}MB). Максимальный размер: 100MB.`);
+          return;
+        }
+        
+        // Проверяем поддерживаемые форматы файлов
+        const supportedFormats = ['.pdf', '.txt', '.docx', '.doc', '.rtf', '.odt'];
+        const fileExtension = doc.file_name ? doc.file_name.toLowerCase().substring(doc.file_name.lastIndexOf('.')) : '';
+        
+        if (!supportedFormats.includes(fileExtension)) {
+          await ctx.reply(`📄 Формат файла ${fileExtension} не поддерживается. Поддерживаемые форматы: ${supportedFormats.join(', ')}`);
+          return;
+        }
+        
+        this.logger.log(`Обрабатываю документ: ${doc.file_name}, размер: ${doc.file_size} байт, формат: ${fileExtension}`);
+        
         const link = await ctx.telegram.getFileLink(doc.file_id);
         const res = await fetch(link.href);
         if (!res.ok) throw new Error(`TG download error: ${res.statusText}`);
@@ -713,16 +732,35 @@ export class TelegramService {
           'thinking_pen_a.mp4',
           'ДУМАЮ ...',
         );
-        const answer = await this.openai.chatWithFile(
-          caption || ' ',
-          ctx.message.from.id,
-          buffer,
-          doc.file_name || 'file',
-        );
-        await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
-        await ctx.reply(answer.text);
-        if (answer.files.length) {
-          await this.sendFiles(ctx, answer.files);
+        
+        try {
+          const answer = await this.openai.chatWithFile(
+            caption || ' ',
+            ctx.message.from.id,
+            buffer,
+            doc.file_name || 'file',
+          );
+          await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
+          await ctx.reply(answer.text);
+          if (answer.files.length) {
+            await this.sendFiles(ctx, answer.files);
+          }
+        } catch (error) {
+          await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
+          this.logger.error('Ошибка OpenAI при обработке документа:', error);
+          
+          // Даем пользователю понятное сообщение об ошибке
+          if (error instanceof Error) {
+            if (error.message.includes('Run failed')) {
+              await ctx.reply('🤖 Не удалось обработать файл. Возможно, формат файла не поддерживается или файл поврежден. Попробуйте отправить файл в другом формате.');
+            } else if (error.message.includes('file size')) {
+              await ctx.reply('📁 Файл слишком большой для обработки.');
+            } else {
+              await ctx.reply('🤖 Произошла ошибка при обработке файла. Попробуйте позже или обратитесь к администратору.');
+            }
+          } else {
+            await ctx.reply('🤖 Произошла неизвестная ошибка при обработке файла.');
+          }
         }
       } catch (err) {
         this.logger.error('Ошибка обработки документа', err);
