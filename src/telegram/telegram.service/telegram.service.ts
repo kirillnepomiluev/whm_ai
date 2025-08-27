@@ -709,8 +709,10 @@ export class TelegramService {
           return;
         }
         
-        // Проверяем поддерживаемые форматы файлов
-        const supportedFormats = ['.pdf', '.txt', '.docx', '.doc', '.rtf', '.odt'];
+        // Проверяем поддерживаемые форматы файлов (используем тот же список, что и в OpenAiService)
+        const supportedFormats = ['.c', '.cpp', '.css', '.csv', '.doc', '.docx', '.gif', '.go', '.html', '.java', 
+          '.jpeg', '.jpg', '.js', '.json', '.md', '.pdf', '.php', '.pkl', '.png', '.pptx', 
+          '.py', '.rb', '.tar', '.tex', '.ts', '.txt', '.webp', '.xlsx', '.xml', '.zip'];
         const fileExtension = doc.file_name ? doc.file_name.toLowerCase().substring(doc.file_name.lastIndexOf('.')) : '';
         
         if (!supportedFormats.includes(fileExtension)) {
