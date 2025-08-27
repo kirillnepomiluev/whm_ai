@@ -705,6 +705,23 @@ export class OpenAiService {
     fileBuffer: Buffer,
     filename: string,
   ): Promise<OpenAiAnswer> {
+    // Переводим имя файла в прописные буквы и получаем расширение
+    const upperFilename = filename.toUpperCase();
+    const fileExtension = upperFilename.split('.').pop() || '';
+    
+    // Список поддерживаемых расширений (в верхнем регистре)
+    const supportedExtensions = [
+      'C', 'CPP', 'CSS', 'CSV', 'DOC', 'DOCX', 'GIF', 'GO', 'HTML', 'JAVA', 
+      'JPEG', 'JPG', 'JS', 'JSON', 'MD', 'PDF', 'PHP', 'PKL', 'PNG', 'PPTX', 
+      'PY', 'RB', 'TAR', 'TEX', 'TS', 'TXT', 'WEBP', 'XLSX', 'XML', 'ZIP'
+    ];
+    
+    // Проверяем, поддерживается ли расширение
+    if (!supportedExtensions.includes(fileExtension)) {
+      const supportedFormats = supportedExtensions.join(', ');
+      throw new Error(`Неподдерживаемый формат файла: ${fileExtension}. Поддерживаемые форматы: ${supportedFormats}`);
+    }
+    
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -722,7 +739,7 @@ export class OpenAiService {
         thread = { id: threadId };
       }
 
-      this.logger.log(`Обрабатываю файл ${filename} (${fileBuffer.length} байт) для пользователя ${userId}`);
+      this.logger.log(`Обрабатываю файл ${upperFilename} (${fileBuffer.length} байт) для пользователя ${userId}`);
 
       // Используем систему блокировки тредов
       return await this.lockThread(threadId, async () => {
@@ -732,13 +749,13 @@ export class OpenAiService {
         return await this.executeWithRetry(async (client) => {
           try {
             // загружаем файл для ассистента
-            this.logger.log(`Загружаю файл ${filename} в OpenAI API...`);
-            const fileObj = await toFile(fileBuffer, filename);
+            this.logger.log(`Загружаю файл ${upperFilename} в OpenAI API...`);
+            const fileObj = await toFile(fileBuffer, upperFilename);
             const file = await client.files.create({
               file: fileObj,
               purpose: 'assistants',
             });
-            this.logger.log(`Файл ${filename} успешно загружен, ID: ${file.id}`);
+            this.logger.log(`Файл ${upperFilename} успешно загружен, ID: ${file.id}`);
             const vectorStore = await client.vectorStores.create({
               name: `for tread ${thread.id}`,
               file_ids: [file.id],
@@ -802,9 +819,9 @@ export class OpenAiService {
               this.threadMap.delete(userId);
               
               // Рекурсивно вызываем метод с новым тредом
-              return await this.chatWithFile(content, userId, fileBuffer, filename);
+              return await this.chatWithFile(content, userId, fileBuffer, upperFilename);
             }
-            this.logger.error(`Ошибка при обработке файла ${filename}:`, error);
+            this.logger.error(`Ошибка при обработке файла ${upperFilename}:`, error);
             throw error;
           }
         });
@@ -822,7 +839,12 @@ export class OpenAiService {
       
       // Проверяем тип ошибки и даем более конкретный ответ
       if (error instanceof Error) {
-        if (error.message.includes('Run failed')) {
+        if (error.message.includes('Неподдерживаемый формат файла')) {
+          return {
+            text: `❌ ${error.message}`,
+            files: [],
+          };
+        } else if (error.message.includes('Run failed')) {
           return {
             text: '🤖 Не удалось обработать файл. Возможно, формат файла не поддерживается или файл слишком большой. Попробуйте отправить файл в другом формате (например, PDF или TXT).',
             files: [],
