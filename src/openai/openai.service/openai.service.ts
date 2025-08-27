@@ -409,6 +409,14 @@ export class OpenAiService {
         });
       });
     } catch (error) {
+      if (error instanceof Error && error.message === 'VECTOR_STORE_EXPIRED') {
+        this.logger.log('Создаем новый тред из-за истекшего векторного хранилища');
+        // Удаляем старый тред из сессии и создаем новый
+        await this.sessionService.setSessionId(userId, null);
+        this.threadMap.delete(userId);
+        // Рекурсивно вызываем метод с новым тредом
+        return await this.chat(content, userId);
+      }
       this.logger.error('Ошибка в чате с ассистентом', error);
       
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
@@ -613,6 +621,14 @@ export class OpenAiService {
         });
       });
     } catch (error) {
+      if (error instanceof Error && error.message === 'VECTOR_STORE_EXPIRED') {
+        this.logger.log('Создаем новый тред из-за истекшего векторного хранилища');
+        // Удаляем старый тред из сессии и создаем новый
+        await this.sessionService.setSessionId(userId, null);
+        this.threadMap.delete(userId);
+        // Рекурсивно вызываем метод с новым тредом
+        return await this.chatWithImage(content, userId, image);
+      }
       this.logger.error('Ошибка при отправке сообщения с картинкой', error);
       
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
@@ -723,16 +739,21 @@ export class OpenAiService {
               purpose: 'assistants',
             });
             this.logger.log(`Файл ${filename} успешно загружен, ID: ${file.id}`);
+            const vectorStore = await client.vectorStores.create({
+              name: `for tread ${thread.id}`,
+              file_ids: [file.id],
+            });
+            await client.beta.threads.update(thread.id, {
+              tool_resources: {
+                file_search: {
+                  vector_store_ids: [vectorStore.id],
+                },
+              },
+            });
 
             await client.beta.threads.messages.create(thread.id, {
               role: 'user',
               content,
-              attachments: [
-                {
-                  file_id: file.id,
-                  tools: [{ type: 'code_interpreter' }],
-                },
-              ],
             });
             this.logger.log(`Сообщение с файлом добавлено в тред ${thread.id}`);
 
@@ -774,6 +795,15 @@ export class OpenAiService {
               throw new Error(`Run завершился со статусом: ${response.status}`);
             }
           } catch (error) {
+            if (error instanceof Error && error.message === 'VECTOR_STORE_EXPIRED') {
+              this.logger.log('Создаем новый тред из-за истекшего векторного хранилища');
+              // Удаляем старый тред из сессии и создаем новый
+              await this.sessionService.setSessionId(userId, null);
+              this.threadMap.delete(userId);
+              
+              // Рекурсивно вызываем метод с новым тредом
+              return await this.chatWithFile(content, userId, fileBuffer, filename);
+            }
             this.logger.error(`Ошибка при обработке файла ${filename}:`, error);
             throw error;
           }
