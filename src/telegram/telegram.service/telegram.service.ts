@@ -384,24 +384,17 @@ export class TelegramService {
 
       // Проверяем на бэкенде
       try {
-        // Пытаемся как GET c query string, при ошибке пробуем POST JSON
-        const url = `https://api.wehavemusic.tech/bot/link/exists-by-email?email=${encodeURIComponent(email)}`;
         const secret = process.env.TELEGRAM_BOT_SECRET || process.env.X_TELEGRAM_BOT_SECRET;
-        const baseHeaders: any = secret ? { 'x-telegram-bot-secret': secret } : {};
-        let res = await fetch(url, { method: 'GET', headers: baseHeaders, timeout: 20000 as any });
-        if (!res.ok) {
-          // fallback на POST
-          res = await fetch('https://api.wehavemusic.tech/bot/link/exists-by-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...baseHeaders },
-            body: JSON.stringify({ email }),
-            timeout: 20000 as any,
-          });
-        }
+        const headers: any = { 'Content-Type': 'application/json' };
+        if (secret) headers['x-telegram-bot-secret'] = secret;
+        const res = await fetch('https://api.wehavemusic.tech/bot/link/exists-by-email', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ email, telegramId: String(userId) }),
+          timeout: 20000 as any,
+        });
 
         if (!res.ok) {
-          const bodyText = await res.text().catch(() => '');
-          this.logger.warn(`Email check failed after fallback: status=${res.status}, bodyPreview=${bodyText.slice(0, 500)}`);
           await ctx.reply('😕 Не удалось проверить e-mail. Попробуйте позже.');
           return;
         }
@@ -411,7 +404,7 @@ export class TelegramService {
         const exists = typeof data?.ok === 'boolean' ? data.ok : true;
 
         if (!exists) {
-          await ctx.reply('❌ Этот e-mail не найден. Убедитесь, что вы используете e-mail из We Have Music и отправьте снова.');
+          await ctx.reply('❌ Некорректный e-mail или этот e-mail уже используется другим пользователем.');
           return;
         }
 
