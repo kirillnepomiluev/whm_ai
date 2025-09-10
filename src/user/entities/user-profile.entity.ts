@@ -1,11 +1,4 @@
-import {
-  Column,
-  Entity,
-  OneToOne,
-  JoinColumn,
-  PrimaryGeneratedColumn,
-  OneToMany,
-} from 'typeorm';
+import { Column, Entity, OneToOne, JoinColumn, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
 import { UserTokens } from './user-tokens.entity';
 import { TokenTransaction } from './token-transaction.entity';
 
@@ -43,6 +36,10 @@ export class UserProfile {
 
   @Column({ nullable: true })
   sessionId?: string;
+
+  // Идентификатор пользователя в портале We Have Music
+  @Column({ nullable: true })
+  userIdPortal?: string;
 
   // Дата начала оплаченного тарифа
   @Column({ type: 'timestamptz', nullable: true })

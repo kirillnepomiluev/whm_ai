@@ -385,13 +385,13 @@ export class TelegramService {
       // Проверяем на бэкенде
       try {
         // Пытаемся как GET c query string, при ошибке пробуем POST JSON
-        const url = `https://api.wehavemusic.tech/user/exists-by-email?email=${encodeURIComponent(email)}`;
+        const url = `https://api.wehavemusic.tech/bot/link/exists-by-email?email=${encodeURIComponent(email)}`;
         const secret = process.env.TELEGRAM_BOT_SECRET || process.env.X_TELEGRAM_BOT_SECRET;
         const baseHeaders: any = secret ? { 'x-telegram-bot-secret': secret } : {};
         let res = await fetch(url, { method: 'GET', headers: baseHeaders, timeout: 20000 as any });
         if (!res.ok) {
           // fallback на POST
-          res = await fetch('https://api.wehavemusic.tech/user/exists-by-email', {
+          res = await fetch('https://api.wehavemusic.tech/bot/link/exists-by-email', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...baseHeaders },
             body: JSON.stringify({ email }),
@@ -407,12 +407,19 @@ export class TelegramService {
         }
 
         const data: any = await res.json().catch(() => ({}));
-        // Ожидаем поле exists=true/false, иначе допускаем по 2xx
-        const exists = typeof data?.exists === 'boolean' ? data.exists : true;
+        // Новый формат как у confirm: { ok: boolean, userId?: string }
+        const exists = typeof data?.ok === 'boolean' ? data.ok : true;
 
         if (!exists) {
           await ctx.reply('❌ Этот e-mail не найден. Убедитесь, что вы используете e-mail из We Have Music и отправьте снова.');
           return;
+        }
+
+        // Сохраняем userIdPortal при успехе
+        const profile = await this.findOrCreateProfile(ctx.message.from);
+        if (data.userId && !profile.userIdPortal) {
+          profile.userIdPortal = String(data.userId);
+          await this.profileRepo.save(profile);
         }
 
         awaitingEmail.delete(userId);
@@ -952,11 +959,40 @@ export class TelegramService {
       const payload = (ctx as any).startPayload ?? (((ctx as any).message?.text || '').split(' ').slice(1).join(' ') || '').trim();
 
       if (payload) {
-        // Старт по ссылке с вашего сайта — не запрашиваем e-mail
-        await this.findOrCreateProfile(ctx.from);
-        awaitingEmail.delete(userId);
-        emailVerified.add(userId);
-        await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
+        // Старт по deeplink: подтверждаем токен на бэкенде
+        try {
+          const secret = process.env.TELEGRAM_BOT_SECRET || process.env.X_TELEGRAM_BOT_SECRET;
+          const headers: any = { 'Content-Type': 'application/json' };
+          if (secret) headers['x-telegram-bot-secret'] = secret;
+
+          const res = await fetch('https://api.wehavemusic.tech/bot/link/confirm', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ token: payload, telegramId: String(userId) }),
+            timeout: 20000 as any,
+          });
+
+          if (res.ok) {
+            const data: any = await res.json().catch(() => ({}));
+            if (data?.ok === true) {
+              const profile = await this.findOrCreateProfile(ctx.from);
+              if (data.userId && !profile.userIdPortal) {
+                profile.userIdPortal = String(data.userId);
+                await this.profileRepo.save(profile);
+              }
+              awaitingEmail.delete(userId);
+              emailVerified.add(userId);
+              await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
+              return;
+            }
+          }
+        } catch (err) {
+          this.logger.error('Ошибка подтверждения deeplink токена', err);
+        }
+        // Если подтверждение не прошло — сообщаем об ошибке ссылки и выходим
+        await ctx.reply(
+          '❌ Ссылка недействительна или уже использована. Сгенерируйте новую ссылку в личном кабинете We Have Music и перейдите по ней из браузера.',
+        );
         return;
       }
 
