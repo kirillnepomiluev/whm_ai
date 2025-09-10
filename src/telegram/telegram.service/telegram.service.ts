@@ -16,7 +16,8 @@ import { OrderIncome } from '../../user/entities/order-income.entity';
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
   // текст приветственного сообщения
-  private readonly welcomeMessage = 'Я умный ассистент компании "We have music". Я здесь, чтобы помочь вам с вопросами по лицензированию музыкальных треков, цифровой дистрибьюции и другим связанным темам. Как я могу помочь вам сегодня? 🎶';
+  private readonly welcomeMessage =
+    'Я умный ассистент компании "We have music". Я здесь, чтобы помочь вам с вопросами по лицензированию музыкальных треков, цифровой дистрибьюции и другим связанным темам. Как я могу помочь вам сегодня? 🎶';
   // Стоимость операций в токенах
   private readonly COST_TEXT = 1;
   private readonly COST_IMAGE = 60;
@@ -25,11 +26,10 @@ export class TelegramService {
   private readonly COST_VOICE_REPLY_EXTRA = 3; // после распознавания
   // обработка документа
   private readonly COST_FILE = 2;
-  
+
   // Флаги для управления функциями генерации
   private readonly IMAGE_GENERATION_ENABLED = true; // генерация изображений включена
   private readonly VIDEO_GENERATION_ENABLED = false; // генерация видео отключена
-  
 
   constructor(
     @InjectBot() private readonly bot: Telegraf<Context>,
@@ -102,6 +102,7 @@ export class TelegramService {
   // Обновление прогресса генерации видео
   private async updateVideoProgress(ctx: Context, messageId: number, status: string, attempt: number, _maxAttempts: number) {
     try {
+      void _maxAttempts;
       const elapsedSeconds = attempt * 10;
       const progressText = `СОЗДАЮ ВИДЕО ---- ${elapsedSeconds}с ---- ${status}`;
       await ctx.telegram.editMessageText(ctx.chat.id, messageId, undefined, progressText);
@@ -137,10 +138,10 @@ export class TelegramService {
     try {
       // Генерируем изображение
       const image = await this.openai.generateImage(prompt);
-      
+
       // Останавливаем обновление прогресса
       clearInterval(progressInterval);
-      
+
       return image;
     } catch (error) {
       // Останавливаем обновление прогресса в случае ошибки
@@ -150,7 +151,12 @@ export class TelegramService {
   }
 
   // Генерация изображения на основе фото с обновлением прогресса
-  private async generateImageFromPhotoWithProgress(ctx: Context, imageBuffer: Buffer, prompt: string, progressMsg: any): Promise<string | Buffer | null> {
+  private async generateImageFromPhotoWithProgress(
+    ctx: Context,
+    imageBuffer: Buffer,
+    prompt: string,
+    progressMsg: any,
+  ): Promise<string | Buffer | null> {
     const maxAttempts = 6; // максимум 1 минута ожидания (6 * 10 секунд)
     let attempts = 0;
 
@@ -165,10 +171,10 @@ export class TelegramService {
     try {
       // Генерируем изображение на основе фото
       const image = await this.openai.generateImageFromPhoto(imageBuffer, prompt);
-      
+
       // Останавливаем обновление прогресса
       clearInterval(progressInterval);
-      
+
       return image;
     } catch (error) {
       // Останавливаем обновление прогресса в случае ошибки
@@ -192,18 +198,13 @@ export class TelegramService {
   /**
    * Создание профиля при отсутствии в локальной базе
    */
-  private async findOrCreateProfile(
-    from: { id: number; first_name?: string; username?: string },
-    invitedBy?: string,
-    ctx?: Context,
-  ): Promise<UserProfile> {
+  private async findOrCreateProfile(from: { id: number; first_name?: string; username?: string }): Promise<UserProfile> {
     let profile = await this.profileRepo.findOne({
       where: { telegramId: String(from.id) },
       relations: ['tokens'],
     });
 
     const now = new Date();
-    let isNew = false;
     if (!profile) {
       profile = this.profileRepo.create({
         telegramId: String(from.id),
@@ -213,9 +214,6 @@ export class TelegramService {
         lastMessageAt: now,
       });
       profile = await this.profileRepo.save(profile);
-
-      isNew = true;
-
       let tokens = this.tokensRepo.create({ userId: profile.id });
       tokens = await this.tokensRepo.save(tokens);
       profile.userTokensId = tokens.id;
@@ -239,9 +237,7 @@ export class TelegramService {
       await this.addTransaction(profile, tokens.tokens, 'CREDIT', 'initial balance');
     }
 
-    if (isNew && ctx) {
-      await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
-    }
+    // Автоприветствие перенесено в ветку после успешной верификации e-mail
 
     return profile;
   }
@@ -249,7 +245,7 @@ export class TelegramService {
   /** Всегда создаёт (при необходимости) и возвращает локальный профиль */
   private async ensureUser(ctx: Context): Promise<UserProfile | null> {
     const from = ctx.message.from;
-    const profile = await this.findOrCreateProfile(from, undefined, ctx);
+    const profile = await this.findOrCreateProfile(from);
     return profile;
   }
 
@@ -269,10 +265,10 @@ export class TelegramService {
           await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
           return;
         }
-        
+
         // Отправляем сообщение об оптимизации запроса
         const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
-        
+
         // Генерируем видео (внутри будет оптимизация промта)
         const videoResult = await this.video.generateVideo(prompt, {
           onProgress: (status, attempt, maxAttempts) => {
@@ -282,16 +278,16 @@ export class TelegramService {
             } else {
               this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
             }
-          }
+          },
         });
-        
+
         // Удаляем сообщение с прогрессом
         try {
           await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
         } catch (error) {
           this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
         }
-        
+
         if (videoResult.success && videoResult.videoUrl) {
           const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
           if (videoBuffer) {
@@ -331,7 +327,7 @@ export class TelegramService {
       } catch (deleteError) {
         this.logger.warn('Не удалось удалить сообщение "ДУМАЮ"', deleteError);
       }
-      
+
       // Проверяем, является ли это ошибкой занятого треда
       if (error instanceof Error && error.message.includes('Тред уже занят')) {
         await ctx.reply('⏳ Тред уже занят другим запросом. Пожалуйста, дождитесь завершения предыдущего запроса.');
@@ -345,6 +341,90 @@ export class TelegramService {
   }
 
   private registerHandlers() {
+    // Простое состояние ожидания e-mail по userId
+    const awaitingEmail = new Set<number>();
+    const emailVerified = new Set<number>();
+
+    const isEmail = (text: string) => {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(text.toLowerCase());
+    };
+
+    // Глобальный мидлвар: если ждём e-mail, блокируем остальные хендлеры
+    this.bot.use(async (ctx, next) => {
+      const userId = (ctx.from as any)?.id as number | undefined;
+      if (!userId) return next();
+
+      // Разрешаем /start всегда
+      const text = (ctx as any).message?.text as string | undefined;
+      if (text?.startsWith('/start')) {
+        return next();
+      }
+
+      // Если e-mail уже верифицирован — пропускаем
+      if (emailVerified.has(userId)) {
+        return next();
+      }
+
+      // Если не ожидаем e-mail — пропускаем
+      if (!awaitingEmail.has(userId)) {
+        return next();
+      }
+
+      // Ожидаем только текст с e-mail
+      if (!text) {
+        await ctx.reply('Чтобы продолжить, отправьте ваш e-mail от профиля We Have Music.');
+        return;
+      }
+
+      const email = text.trim();
+      if (!isEmail(email)) {
+        await ctx.reply('Похоже, этот не e-mail не зарегестрирован. Зарегистрируйтесь на сайте https://wehavemusic.tech');
+        return;
+      }
+
+      // Проверяем на бэкенде
+      try {
+        // Пытаемся как GET c query string, при ошибке пробуем POST JSON
+        const url = `https://api.wehavemusic.tech/user/exists-by-email?email=${encodeURIComponent(email)}`;
+        const secret = process.env.TELEGRAM_BOT_SECRET || process.env.X_TELEGRAM_BOT_SECRET;
+        const baseHeaders: any = secret ? { 'x-telegram-bot-secret': secret } : {};
+        let res = await fetch(url, { method: 'GET', headers: baseHeaders, timeout: 20000 as any });
+        if (!res.ok) {
+          // fallback на POST
+          res = await fetch('https://api.wehavemusic.tech/user/exists-by-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...baseHeaders },
+            body: JSON.stringify({ email }),
+            timeout: 20000 as any,
+          });
+        }
+
+        if (!res.ok) {
+          await ctx.reply('Не удалось проверить e-mail. Попробуйте позже.');
+          return;
+        }
+
+        const data: any = await res.json().catch(() => ({}));
+        // Ожидаем поле exists=true/false, иначе допускаем по 2xx
+        const exists = typeof data?.exists === 'boolean' ? data.exists : true;
+
+        if (!exists) {
+          await ctx.reply('Этот e-mail не найден. Убедитесь, что вы используете e-mail из We Have Music, и отправьте снова.');
+          return;
+        }
+
+        awaitingEmail.delete(userId);
+        emailVerified.add(userId);
+        await ctx.reply('Спасибо! E-mail подтверждён.');
+        await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
+        return;
+      } catch (err) {
+        this.logger.error('Ошибка проверки e-mail', err);
+        await ctx.reply('Произошла ошибка при проверке e-mail. Попробуйте позже.');
+        return;
+      }
+    });
+
     this.bot.on('text', async (ctx, next) => {
       try {
         const q = ctx.message.text?.trim();
@@ -371,10 +451,10 @@ export class TelegramService {
             await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
             return;
           }
-          
+
           // Отправляем сообщение об оптимизации запроса
           const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
-          
+
           // Генерируем видео (внутри будет оптимизация промта)
           const videoResult = await this.video.generateVideo(prompt, {
             onProgress: (status, attempt, maxAttempts) => {
@@ -384,16 +464,16 @@ export class TelegramService {
               } else {
                 this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
               }
-            }
+            },
           });
-          
+
           // Удаляем сообщение с прогрессом
           try {
             await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
           } catch (error) {
             this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
           }
-          
+
           if (videoResult.success && videoResult.videoUrl) {
             const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
             if (videoBuffer) {
@@ -423,9 +503,9 @@ export class TelegramService {
           // Текстовый чат
           // показываем пользователю, что мы "думаем" над ответом
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
-          
+
           // Обрабатываем запрос асинхронно, не блокируя другие сообщения
-          this.processOpenAiRequest(ctx, q, user, thinkingMsg).catch(error => {
+          this.processOpenAiRequest(ctx, q, user, thinkingMsg).catch((error) => {
             this.logger.error('Ошибка при асинхронной обработке OpenAI запроса', error);
           });
         }
@@ -453,10 +533,10 @@ export class TelegramService {
             return;
           }
           if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
-          
+
           // Отправляем сообщение об оптимизации запроса
           const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
-          
+
           // Генерируем видео (внутри будет оптимизация промта)
           const videoResult = await this.video.generateVideo(text, {
             onProgress: (status, attempt, maxAttempts) => {
@@ -466,16 +546,16 @@ export class TelegramService {
               } else {
                 this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
               }
-            }
+            },
           });
-          
+
           // Удаляем сообщение с прогрессом
           try {
             await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
           } catch (error) {
             this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
           }
-          
+
           if (videoResult.success && videoResult.videoUrl) {
             const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
             if (videoBuffer) {
@@ -502,10 +582,10 @@ export class TelegramService {
           }
         } else {
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
-          
+
           try {
             const answer = await this.openai.chat(text, ctx.message.from.id);
-            
+
             // Удаляем сообщение "ДУМАЮ" только после успешного получения ответа
             await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
@@ -520,10 +600,10 @@ export class TelegramService {
                 await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
                 return;
               }
-              
+
               // Отправляем сообщение об оптимизации запроса
               const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
-              
+
               // Генерируем видео (внутри будет оптимизация промта)
               const videoResult = await this.video.generateVideo(prompt, {
                 onProgress: (status, attempt, maxAttempts) => {
@@ -533,7 +613,7 @@ export class TelegramService {
                   } else {
                     this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
                   }
-                }
+                },
               });
               if (videoResult.success && videoResult.videoUrl) {
                 const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
@@ -582,7 +662,7 @@ export class TelegramService {
             } catch (deleteError) {
               this.logger.warn('Не удалось удалить сообщение "ДУМАЮ"', deleteError);
             }
-            
+
             // Проверяем, является ли это ошибкой занятого треда
             if (error instanceof Error && error.message.includes('Тред уже занят')) {
               await ctx.reply('⏳ Тред уже занят другим запросом. Пожалуйста, дождитесь завершения предыдущего запроса.');
@@ -640,10 +720,10 @@ export class TelegramService {
             await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
             return;
           }
-          
+
           // Отправляем сообщение об оптимизации запроса
           const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
-          
+
           // Генерируем видео по изображению (внутри будет оптимизация промта)
           const videoResult = await this.video.generateVideoFromImage(buffer, prompt, {
             onProgress: (status, attempt, maxAttempts) => {
@@ -653,16 +733,16 @@ export class TelegramService {
               } else {
                 this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
               }
-            }
+            },
           });
-          
+
           // Удаляем сообщение с прогрессом
           try {
             await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
           } catch (error) {
             this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
           }
-          
+
           if (videoResult.success && videoResult.videoUrl) {
             const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
             if (videoBuffer) {
@@ -676,11 +756,7 @@ export class TelegramService {
         } else {
           if (!(await this.chargeTokens(ctx, user, this.COST_TEXT))) return;
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
-          const answer = await this.openai.chatWithImage(
-            caption,
-            ctx.message.from.id,
-            buffer,
-          );
+          const answer = await this.openai.chatWithImage(caption, ctx.message.from.id, buffer);
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
           await ctx.reply(answer.text);
           if (answer.files.length) {
@@ -701,27 +777,56 @@ export class TelegramService {
         if (!user) return;
 
         const doc = ctx.message.document;
-        
+
         // Проверяем размер файла (максимум 100MB)
         const maxFileSize = 100 * 1024 * 1024; // 100MB в байтах
         if (doc.file_size && doc.file_size > maxFileSize) {
           await ctx.reply(`📁 Файл слишком большой (${(doc.file_size / 1024 / 1024).toFixed(1)}MB). Максимальный размер: 100MB.`);
           return;
         }
-        
+
         // Проверяем поддерживаемые форматы файлов (используем тот же список, что и в OpenAiService)
-        const supportedFormats = ['.c', '.cpp', '.css', '.csv', '.doc', '.docx', '.gif', '.go', '.html', '.java', 
-          '.jpeg', '.jpg', '.js', '.json', '.md', '.pdf', '.php', '.pkl', '.png', '.pptx', 
-          '.py', '.rb', '.tar', '.tex', '.ts', '.txt', '.webp', '.xlsx', '.xml', '.zip'];
+        const supportedFormats = [
+          '.c',
+          '.cpp',
+          '.css',
+          '.csv',
+          '.doc',
+          '.docx',
+          '.gif',
+          '.go',
+          '.html',
+          '.java',
+          '.jpeg',
+          '.jpg',
+          '.js',
+          '.json',
+          '.md',
+          '.pdf',
+          '.php',
+          '.pkl',
+          '.png',
+          '.pptx',
+          '.py',
+          '.rb',
+          '.tar',
+          '.tex',
+          '.ts',
+          '.txt',
+          '.webp',
+          '.xlsx',
+          '.xml',
+          '.zip',
+        ];
         const fileExtension = doc.file_name ? doc.file_name.toLowerCase().substring(doc.file_name.lastIndexOf('.')) : '';
-        
+
         if (!supportedFormats.includes(fileExtension)) {
           await ctx.reply(`📄 Формат файла ${fileExtension} не поддерживается. Поддерживаемые форматы: ${supportedFormats.join(', ')}`);
           return;
         }
-        
+
         this.logger.log(`Обрабатываю документ: ${doc.file_name}, размер: ${doc.file_size} байт, формат: ${fileExtension}`);
-        
+
         const link = await ctx.telegram.getFileLink(doc.file_id);
         const res = await fetch(link.href);
         if (!res.ok) throw new Error(`TG download error: ${res.statusText}`);
@@ -729,19 +834,10 @@ export class TelegramService {
 
         if (!(await this.chargeTokens(ctx, user, this.COST_FILE))) return;
 
-        const thinkingMsg = await this.sendAnimation(
-          ctx,
-          'thinking_pen_a.mp4',
-          'ДУМАЮ ...',
-        );
-        
+        const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
+
         try {
-          const answer = await this.openai.chatWithFile(
-            caption || ' ',
-            ctx.message.from.id,
-            buffer,
-            doc.file_name || 'file',
-          );
+          const answer = await this.openai.chatWithFile(caption || ' ', ctx.message.from.id, buffer, doc.file_name || 'file');
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
           await ctx.reply(answer.text);
           if (answer.files.length) {
@@ -750,13 +846,15 @@ export class TelegramService {
         } catch (error) {
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
           this.logger.error('Ошибка OpenAI при обработке документа:', error);
-          
+
           // Даем пользователю понятное сообщение об ошибке
           if (error instanceof Error) {
             if (error.message.includes('Неподдерживаемый формат файла')) {
               await ctx.reply(`❌ ${error.message}`);
             } else if (error.message.includes('Run failed')) {
-              await ctx.reply('🤖 Не удалось обработать файл. Возможно, формат файла не поддерживается или файл поврежден. Попробуйте отправить файл в другом формате.');
+              await ctx.reply(
+                '🤖 Не удалось обработать файл. Возможно, формат файла не поддерживается или файл поврежден. Попробуйте отправить файл в другом формате.',
+              );
             } else if (error.message.includes('file size')) {
               await ctx.reply('📁 Файл слишком большой для обработки.');
             } else {
@@ -798,18 +896,18 @@ export class TelegramService {
 
     // команда /hello выводит приветственное сообщение
     this.bot.command('hello', async (ctx) => {
-      await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      await this.findOrCreateProfile(ctx.message.from);
       await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
     });
     // поддерживаем вариант без слеша
     this.bot.hears(/^hello$/i, async (ctx) => {
-      await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      await this.findOrCreateProfile(ctx.message.from);
       await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
     });
 
     // общая функция-обработчик команды /profile и текста "profile"
     const profileHandler = async (ctx: Context) => {
-      const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      const profile = await this.findOrCreateProfile(ctx.message.from);
 
       const userParts = [] as string[];
       if (profile.firstName) userParts.push(profile.firstName);
@@ -842,15 +940,34 @@ export class TelegramService {
     // поддерживаем вариант без слеша
     this.bot.hears(/^profile$/i, profileHandler);
 
-    // Упрощённый /start: создаём профиль и приветствуем
+    // /start: если есть payload (deeplink с сайта) — сразу приветствуем; иначе просим e-mail
     this.bot.start(async (ctx) => {
-      await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
+      const from = ctx.from as any;
+      const userId = from?.id as number | undefined;
+      if (!userId) return;
+
+      // Определяем payload: telegraf кладёт в ctx.startPayload; дополнительно парсим текст
+      const payload = (ctx as any).startPayload ?? (((ctx as any).message?.text || '').split(' ').slice(1).join(' ') || '').trim();
+
+      if (payload) {
+        // Старт по ссылке с вашего сайта — не запрашиваем e-mail
+        await this.findOrCreateProfile(ctx.from);
+        awaitingEmail.delete(userId);
+        emailVerified.add(userId);
+        await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
+        return;
+      }
+
+      // Обычный старт — запрашиваем e-mail
+      await this.findOrCreateProfile(ctx.from);
+      emailVerified.delete(userId);
+      awaitingEmail.add(userId);
+      await ctx.reply('Добро пожаловать! Укажите, пожалуйста, ваш e-mail для продолжения. Без e-mail вы не сможете пользоваться ботом.');
     });
 
     // Тестовое пополнение токенов
     this.bot.command('testAddTokens', async (ctx) => {
-      const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      const profile = await this.findOrCreateProfile(ctx.message.from);
       const add = 1000;
       profile.tokens.tokens += add;
       await this.tokensRepo.save(profile.tokens);
@@ -860,7 +977,7 @@ export class TelegramService {
 
     // Тестовое списание всех токенов
     this.bot.command('testZeroTokens', async (ctx) => {
-      const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      const profile = await this.findOrCreateProfile(ctx.message.from);
       const currentTokens = profile.tokens.tokens;
       if (currentTokens > 0) {
         profile.tokens.tokens = 0;
