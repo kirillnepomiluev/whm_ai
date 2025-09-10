@@ -372,13 +372,13 @@ export class TelegramService {
 
       // Ожидаем только текст с e-mail
       if (!text) {
-        await ctx.reply('Чтобы продолжить, отправьте ваш e-mail от профиля We Have Music.');
+        await ctx.reply('✉️ Чтобы продолжить, отправьте ваш e-mail от профиля We Have Music.');
         return;
       }
 
       const email = text.trim();
       if (!isEmail(email)) {
-        await ctx.reply('Похоже, этот не e-mail не зарегестрирован. Зарегистрируйтесь на сайте https://wehavemusic.tech');
+        await ctx.reply('⚠️ Некорректный e-mail. Пожалуйста, укажите e-mail, зарегистрированный на We Have Music.');
         return;
       }
 
@@ -388,9 +388,14 @@ export class TelegramService {
         const url = `https://api.wehavemusic.tech/user/exists-by-email?email=${encodeURIComponent(email)}`;
         const secret = process.env.TELEGRAM_BOT_SECRET || process.env.X_TELEGRAM_BOT_SECRET;
         const baseHeaders: any = secret ? { 'x-telegram-bot-secret': secret } : {};
+        const maskedHeaders = secret ? { 'x-telegram-bot-secret': `***${String(secret).slice(-4)}` } : {};
+        this.logger.log(`Email check (GET): userId=${userId}, email=${email}, url=${url}, headers=${JSON.stringify(maskedHeaders)}`);
         let res = await fetch(url, { method: 'GET', headers: baseHeaders, timeout: 20000 as any });
         if (!res.ok) {
+          const errBody = await res.text().catch(() => '');
+          this.logger.warn(`Email check GET failed: status=${res.status}, bodyPreview=${errBody.slice(0, 500)}`);
           // fallback на POST
+          this.logger.log(`Email check (POST): userId=${userId}, email=${email}, url=https://api.wehavemusic.tech/user/exists-by-email, headers=${JSON.stringify(maskedHeaders)}`);
           res = await fetch('https://api.wehavemusic.tech/user/exists-by-email', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...baseHeaders },
@@ -400,27 +405,35 @@ export class TelegramService {
         }
 
         if (!res.ok) {
-          await ctx.reply('Не удалось проверить e-mail. Попробуйте позже.');
+          const bodyText = await res.text().catch(() => '');
+          this.logger.warn(`Email check failed after fallback: status=${res.status}, bodyPreview=${bodyText.slice(0, 500)}`);
+          await ctx.reply('😕 Не удалось проверить e-mail. Попробуйте позже.');
           return;
         }
 
+        // Для успешного ответа попробуем логировать небольшой префикс тела
+        try {
+          const preview = await res.clone().text();
+          this.logger.debug(`Email check OK: status=${res.status}, bodyPreview=${preview.slice(0, 500)}`);
+        } catch {}
         const data: any = await res.json().catch(() => ({}));
         // Ожидаем поле exists=true/false, иначе допускаем по 2xx
         const exists = typeof data?.exists === 'boolean' ? data.exists : true;
+        this.logger.log(`Email check result: userId=${userId}, email=${email}, exists=${exists}`);
 
         if (!exists) {
-          await ctx.reply('Этот e-mail не найден. Убедитесь, что вы используете e-mail из We Have Music, и отправьте снова.');
+          await ctx.reply('❌ Этот e-mail не найден. Убедитесь, что вы используете e-mail из We Have Music и отправьте снова.');
           return;
         }
 
         awaitingEmail.delete(userId);
         emailVerified.add(userId);
-        await ctx.reply('Спасибо! E-mail подтверждён.');
+        await ctx.reply('✅ Спасибо! E-mail подтверждён.');
         await this.sendAnimation(ctx, 'cute_a.mp4', this.welcomeMessage);
         return;
       } catch (err) {
         this.logger.error('Ошибка проверки e-mail', err);
-        await ctx.reply('Произошла ошибка при проверке e-mail. Попробуйте позже.');
+        await ctx.reply('⚠️ Произошла ошибка при проверке e-mail. Попробуйте позже.');
         return;
       }
     });
@@ -962,7 +975,9 @@ export class TelegramService {
       await this.findOrCreateProfile(ctx.from);
       emailVerified.delete(userId);
       awaitingEmail.add(userId);
-      await ctx.reply('Добро пожаловать! Укажите, пожалуйста, ваш e-mail для продолжения. Без e-mail вы не сможете пользоваться ботом.');
+      await ctx.reply(
+        '👋 Добро пожаловать! Укажите, пожалуйста, e-mail, зарегистрированный на We Have Music. Без e-mail вы не сможете пользоваться ботом.',
+      );
     });
 
     // Тестовое пополнение токенов
