@@ -11,6 +11,7 @@ import { UserProfile } from '../../user/entities/user-profile.entity';
 import { UserTokens } from '../../user/entities/user-tokens.entity';
 import { TokenTransaction } from '../../user/entities/token-transaction.entity';
 import { OrderIncome } from '../../user/entities/order-income.entity';
+import { NetworkRetryUtil } from '../utils/network-retry.util';
 
 @Injectable()
 export class TelegramService {
@@ -45,7 +46,31 @@ export class TelegramService {
     @InjectRepository(OrderIncome)
     private readonly incomeRepo: Repository<OrderIncome>,
   ) {
-    this.registerHandlers();
+    this.initializeBot();
+  }
+
+  /**
+   * Инициализация бота с retry логикой
+   */
+  private async initializeBot() {
+    try {
+      await NetworkRetryUtil.withRetry(async () => {
+        // Проверяем подключение к Telegram API
+        const botInfo = await this.bot.telegram.getMe();
+        this.logger.log(`Бот успешно подключен: @${botInfo.username}`);
+        return botInfo;
+      }, {
+        maxRetries: 5,
+        delay: 2000,
+        backoffMultiplier: 1.5
+      });
+      
+      this.registerHandlers();
+    } catch (error) {
+      this.logger.error('Не удалось подключиться к Telegram API после нескольких попыток', error);
+      // Регистрируем хендлеры даже при ошибке, чтобы бот мог работать при восстановлении соединения
+      this.registerHandlers();
+    }
   }
 
   // Создаёт запись о движении токенов
@@ -387,7 +412,7 @@ export class TelegramService {
         const secret = process.env.TELEGRAM_BOT_SECRET || process.env.X_TELEGRAM_BOT_SECRET;
         const headers: any = { 'Content-Type': 'application/json' };
         if (secret) headers['x-telegram-bot-secret'] = secret;
-        const res = await fetch('https://api.wehavemusic.tech/bot/link/exists-by-email', {
+        const res = await fetch('https://demo.api.wehavemusic.tech/bot/link/exists-by-email', {
           method: 'POST',
           headers,
           body: JSON.stringify({ email, telegramId: String(userId) }),
@@ -958,7 +983,7 @@ export class TelegramService {
           const headers: any = { 'Content-Type': 'application/json' };
           if (secret) headers['x-telegram-bot-secret'] = secret;
 
-          const res = await fetch('https://api.wehavemusic.tech/bot/link/confirm', {
+          const res = await fetch('https://demo.api.wehavemusic.tech/bot/link/confirm', {
             method: 'POST',
             headers,
             body: JSON.stringify({ token: payload, telegramId: String(userId) }),

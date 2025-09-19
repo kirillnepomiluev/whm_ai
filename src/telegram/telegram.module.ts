@@ -19,7 +19,12 @@ import { OrderIncome } from '../user/entities/order-income.entity';
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
         token: cfg.get<string>('TELEGRAM_BOT_TOKEN'),
-        telegram: { apiRoot: 'https://api.telegram.org', timeout: 120_000 },
+        telegram: { 
+          apiRoot: 'https://api.telegram.org', 
+          timeout: 120_000,
+          // Добавляем retry логику для DNS проблем
+          agent: undefined, // Позволит использовать системные настройки DNS
+        },
       }),
     }),
     // Регистрируем репозитории для локальной БД
