@@ -7,6 +7,7 @@ import { TelegramModule } from './telegram/telegram.module';
 import { OpenaiModule } from './openai/openai.module';
 import { VoiceModule } from './voice/voice.module';
 import { VideoModule } from './video/video.module';
+import { WebhookModule } from './webhook/webhook.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { VideoModule } from './video/video.module';
     OpenaiModule,
     VoiceModule,
     VideoModule,
+    WebhookModule,
   ],
   //  synchronize: true,
   controllers: [AppController],

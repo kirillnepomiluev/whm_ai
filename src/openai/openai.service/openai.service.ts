@@ -303,6 +303,9 @@ export class OpenAiService {
 
   // ID ассистента для оптимизации промтов видео
   private readonly VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID = 'asst_qtXWMEt5EWtSUXTgPEQDqYVM';
+  
+  // ID ассистента для конвертации файлов в JSON
+  private readonly FILE_TO_JSON_ASSISTANT_ID = 'asst_bS6M2JvKYJhHVxCDb3xRviU2';
 
   // Основной текстовый чат с ассистентом
   async chat(content: string, userId: number): Promise<OpenAiAnswer> {
@@ -970,5 +973,124 @@ export class OpenAiService {
     }
     
     return { cleaned, errors };
+  }
+
+  /**
+   * Конвертирует файл в JSON используя специального ассистента
+   * fileBuffer - содержимое файла
+   * filename - имя файла
+   * content - текстовое сообщение/инструкция (опционально)
+   */
+  async fileToJson(
+    fileBuffer: Buffer,
+    filename: string,
+    content?: string,
+  ): Promise<any> {
+    try {
+      this.logger.log(`Конвертирую файл ${filename} в JSON для пользователя через ассистента ${this.FILE_TO_JSON_ASSISTANT_ID}`);
+
+      // Переводим имя файла в нижние буквы и получаем расширение
+      const lowerFilename = filename.toLowerCase();
+      
+      return await this.executeWithRetry(async (client) => {
+        try {
+          // Создаем новый тред для обработки файла
+          const thread = await client.beta.threads.create();
+          this.logger.log(`Создан новый тред ${thread.id} для обработки файла`);
+
+          // Загружаем файл для ассистента
+          this.logger.log(`Загружаю файл ${lowerFilename} в OpenAI API...`);
+          const fileObj = await toFile(fileBuffer, lowerFilename);
+          const file = await client.files.create({
+            file: fileObj,
+            purpose: 'assistants',
+          });
+          this.logger.log(`Файл ${lowerFilename} успешно загружен, ID: ${file.id}`);
+
+          // Создаем векторное хранилище и добавляем файл
+          const vectorStore = await client.vectorStores.create({
+            name: `file-to-json ${thread.id}`,
+            file_ids: [file.id],
+          });
+
+          // Обновляем тред с векторным хранилищем
+          await client.beta.threads.update(thread.id, {
+            tool_resources: {
+              file_search: {
+                vector_store_ids: [vectorStore.id],
+              },
+            },
+          });
+
+          // Добавляем сообщение пользователя в тред
+          const userMessage = content || 'Конвертируй содержимое файла в JSON формат';
+          await client.beta.threads.messages.create(thread.id, {
+            role: 'user',
+            content: userMessage,
+          });
+          this.logger.log(`Сообщение добавлено в тред ${thread.id}`);
+
+          // Запускаем Run с ассистентом для конвертации в JSON
+          this.logger.log(`Запускаю Run для ассистента ${this.FILE_TO_JSON_ASSISTANT_ID}...`);
+          const response = await client.beta.threads.runs.createAndPoll(
+            thread.id,
+            {
+              assistant_id: this.FILE_TO_JSON_ASSISTANT_ID,
+            },
+          );
+
+          this.logger.log(`Run завершен со статусом: ${response.status}`);
+
+          if (response.status === 'completed') {
+            const messages = await client.beta.threads.messages.list(
+              response.thread_id,
+            );
+            const assistantMessage = messages.data[0];
+            this.logger.log(`Получен ответ от ассистента`);
+
+            // Извлекаем текст из ответа ассистента
+            let jsonText = '';
+            for (const part of assistantMessage.content || []) {
+              if (part.type === 'text') {
+                jsonText += part.text.value;
+              }
+            }
+
+            // Пытаемся распарсить JSON из ответа
+            try {
+              const jsonResult = JSON.parse(jsonText);
+              this.logger.log(`Файл ${filename} успешно конвертирован в JSON`);
+              return jsonResult;
+            } catch (parseError) {
+              this.logger.error(`Не удалось распарсить JSON из ответа ассистента:`, parseError);
+              // Возвращаем текст если не удалось распарсить
+              return { result: jsonText };
+            }
+          } else if (response.status === 'failed') {
+            // Получаем детали ошибки
+            const runDetails = await client.beta.threads.runs.retrieve(thread.id, response.id);
+            this.logger.error(`Run failed с деталями:`, {
+              status: response.status,
+              lastError: runDetails.last_error,
+            });
+
+            if (runDetails.last_error) {
+              throw new Error(`Run failed: ${runDetails.last_error.code} - ${runDetails.last_error.message}`);
+            } else {
+              throw new Error(`Run завершился со статусом: ${response.status}`);
+            }
+          } else {
+            this.logger.warn(`Run завершился со статусом: ${response.status}`);
+            throw new Error(`Run завершился со статусом: ${response.status}`);
+          }
+        } catch (error) {
+          this.logger.error(`Ошибка при обработке файла ${lowerFilename}:`, error);
+          throw error;
+        }
+      });
+    } catch (error) {
+      this.logger.error('Ошибка при конвертации файла в JSON', error);
+      throw error;
+    }
   }
 }
