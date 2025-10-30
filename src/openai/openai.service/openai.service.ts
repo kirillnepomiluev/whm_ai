@@ -1007,26 +1007,21 @@ export class OpenAiService {
           });
           this.logger.log(`Файл ${lowerFilename} успешно загружен, ID: ${file.id}`);
 
-          // Создаем векторное хранилище и добавляем файл
-          const vectorStore = await client.vectorStores.create({
-            name: `file-to-json ${thread.id}`,
-            file_ids: [file.id],
-          });
-
-          // Обновляем тред с векторным хранилищем
-          await client.beta.threads.update(thread.id, {
-            tool_resources: {
-              file_search: {
-                vector_store_ids: [vectorStore.id],
-              },
-            },
-          });
-
           // Добавляем сообщение пользователя в тред
           const userMessage = content || 'Конвертируй содержимое файла в JSON формат';
           await client.beta.threads.messages.create(thread.id, {
             role: 'user',
             content: userMessage,
+            attachments: [
+              {
+                file_id: file.id,
+                tools: [
+                  {
+                    type: 'file_search',
+                  },
+                ],
+              },
+            ],
           });
           this.logger.log(`Сообщение добавлено в тред ${thread.id}`);
 
@@ -1048,23 +1043,26 @@ export class OpenAiService {
             const assistantMessage = messages.data[0];
             this.logger.log(`Получен ответ от ассистента`);
 
-            // Извлекаем текст из ответа ассистента
-            let jsonText = '';
-            for (const part of assistantMessage.content || []) {
-              if (part.type === 'text') {
-                jsonText += part.text.value;
+            const answer = await this.buildAnswer(assistantMessage);
+            if (answer.files.length > 0) {
+              try {
+                const buffer = answer.files[0].buffer;
+                const jsonResult = JSON.parse(buffer.toString('utf-8'));
+                this.logger.log(`Файл ${filename} успешно конвертирован в JSON`);
+                return jsonResult;
+              } catch (parseError) {
+                this.logger.error(`Не удалось распарсить JSON из файла ассистента:`, parseError);
+                return { result: answer.files[0].buffer.toString('utf-8') };
               }
             }
 
-            // Пытаемся распарсить JSON из ответа
             try {
-              const jsonResult = JSON.parse(jsonText);
+              const jsonResult = JSON.parse(answer.text);
               this.logger.log(`Файл ${filename} успешно конвертирован в JSON`);
               return jsonResult;
             } catch (parseError) {
               this.logger.error(`Не удалось распарсить JSON из ответа ассистента:`, parseError);
-              // Возвращаем текст если не удалось распарсить
-              return { result: jsonText };
+              return { result: answer.text };
             }
           } else if (response.status === 'failed') {
             // Получаем детали ошибки
