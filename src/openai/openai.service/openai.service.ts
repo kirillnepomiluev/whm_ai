@@ -1017,7 +1017,7 @@ export class OpenAiService {
                 file_id: file.id,
                 tools: [
                   {
-                    type: 'file_search',
+                    type: 'code_interpreter',
                   },
                 ],
               },
